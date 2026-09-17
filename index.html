@@ -2480,15 +2480,81 @@
                 showToast(fxRackPanel.classList.contains('hidden') ? 'CRT Rack Hidden' : 'CRT Rack Open', 'fa-tv');
             };
 
-            // Fullscreen Toggle
+            // Fullscreen & Immersive Clean View Toggle
             const btnFullscreen = document.getElementById('btn-fullscreen');
-            btnFullscreen.onclick = () => {
-                if (!document.fullscreenElement) {
-                    document.documentElement.requestFullscreen().catch(() => {});
-                } else {
-                    document.exitFullscreen().catch(() => {});
+            const mainHeader = document.getElementById('main-header');
+
+            function setUIVisibility(visible) {
+                if (mainHeader) mainHeader.classList.toggle('hidden', !visible);
+                if (controlsDrawer) controlsDrawer.classList.toggle('hidden', !visible);
+                if (osdHud) osdHud.classList.toggle('hidden', !visible);
+
+                // Close any open slide-over panels when entering clean mode
+                if (!visible) {
+                    if (studioDrawer) studioDrawer.classList.add('translate-x-full');
+                    if (vjDrawer) vjDrawer.classList.add('-translate-x-full');
                 }
-            };
+
+                // Update icon to reflect state
+                const fsIcon = btnFullscreen?.querySelector('i');
+                if (fsIcon) {
+                    fsIcon.className = visible ? 'fa-solid fa-expand text-xs' : 'fa-solid fa-compress text-xs';
+                }
+            }
+
+            function toggleFullscreenAndHideUI() {
+                if (!document.fullscreenElement) {
+                    // Enter fullscreen and hide all on-screen settings
+                    document.documentElement.requestFullscreen().then(() => {
+                        setUIVisibility(false);
+                        showToast('Clean Fullscreen: Press F or ESC to restore', 'fa-expand');
+                    }).catch(() => {
+                        // Fallback if browser/iframe restricts requestFullscreen: toggle clean mode anyway
+                        const isCurrentlyHidden = mainHeader?.classList.contains('hidden');
+                        setUIVisibility(isCurrentlyHidden);
+                        showToast(isCurrentlyHidden ? 'UI Restored' : 'Immersive Clean View (Press F or H)', 'fa-eye-slash');
+                    });
+                } else {
+                    // Exit fullscreen and restore all settings panels
+                    document.exitFullscreen().then(() => {
+                        setUIVisibility(true);
+                        showToast('Exited Fullscreen', 'fa-compress');
+                    }).catch(() => {
+                        setUIVisibility(true);
+                    });
+                }
+            }
+
+            // Sync UI restoration if user exits fullscreen using the ESC key or browser controls
+            document.addEventListener('fullscreenchange', () => {
+                if (!document.fullscreenElement) {
+                    setUIVisibility(true);
+                    document.body.style.cursor = 'default';
+                    glCanvas.style.cursor = 'crosshair';
+                } else {
+                    setUIVisibility(false);
+                }
+            });
+
+            // Auto-hide mouse cursor after 2.5s of inactivity in clean fullscreen mode
+            let cursorFadeTimer = null;
+            window.addEventListener('pointermove', () => {
+                document.body.style.cursor = 'default';
+                glCanvas.style.cursor = 'crosshair';
+
+                const isCleanMode = document.fullscreenElement || mainHeader?.classList.contains('hidden');
+                if (isCleanMode) {
+                    clearTimeout(cursorFadeTimer);
+                    cursorFadeTimer = setTimeout(() => {
+                        if (document.fullscreenElement || mainHeader?.classList.contains('hidden')) {
+                            document.body.style.cursor = 'none';
+                            glCanvas.style.cursor = 'none';
+                        }
+                    }, 2500);
+                }
+            });
+
+            btnFullscreen.onclick = () => toggleFullscreenAndHideUI();
 
             // Slider Controls
             const sliderSens = document.getElementById('slider-sens');
@@ -2856,7 +2922,8 @@ warpedUV = center + m * (dir * (u_zoom + pulse));`
                 } else if (e.key.toLowerCase() === 'm') {
                     toggleVjDrawer();
                 } else if (e.key.toLowerCase() === 'f') {
-                    btnFullscreen.click();
+                    e.preventDefault();
+                    toggleFullscreenAndHideUI();
                 } else if (e.key.toLowerCase() === 's') {
                     takeSnapshot();
                 } else if (e.key.toLowerCase() === 'r') {
