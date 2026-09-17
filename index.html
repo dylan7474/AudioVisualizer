@@ -1,0 +1,2949 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-black select-none overflow-hidden">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProjectM & Goom Audio Visualizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600;700&family=Orbitron:wght@600;800;900&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                        retro: ['Orbitron', 'sans-serif']
+                    }
+                }
+            }
+        };
+    </script>
+
+    <style>
+        body {
+            background-color: #030408;
+            color: #e2e8f0;
+            overflow: hidden;
+            touch-action: none;
+        }
+        .glass-panel {
+            background: rgba(13, 17, 28, 0.72);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 16px 36px -10px rgba(0, 0, 0, 0.75);
+        }
+        .glass-panel-accent {
+            background: rgba(22, 28, 45, 0.85);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+        /* Custom scrollbars */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Shutter flash animation */
+        @keyframes cameraFlash {
+            0% { opacity: 0.9; }
+            100% { opacity: 0; }
+        }
+        .animate-shutter {
+            animation: cameraFlash 0.35s ease-out forwards;
+        }
+
+        /* Range sliders */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.15);
+            height: 4px;
+            border-radius: 9999px;
+            outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #38bdf8;
+            cursor: pointer;
+            box-shadow: 0 0 10px #38bdf8;
+            transition: transform 0.1s, background-color 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.25);
+            background: #a855f7;
+            box-shadow: 0 0 14px #a855f7;
+        }
+    </style>
+</head>
+<body class="h-full w-full relative font-sans flex flex-col justify-between">
+
+    <!-- WebGL Canvas for MilkDrop feedback warping & CRT post-fx -->
+    <canvas id="gl-canvas" class="absolute inset-0 w-full h-full block z-0 cursor-crosshair"></canvas>
+    <!-- 2D Canvas for shapes, tentacles, oscilloscopes, and particles -->
+    <canvas id="canvas2d" class="absolute inset-0 w-full h-full block z-10 pointer-events-none"></canvas>
+
+    <!-- Camera Shutter Flash Overlay for Snapshots -->
+    <div id="shutter-flash" class="absolute inset-0 bg-white pointer-events-none z-50 opacity-0 transition-opacity"></div>
+
+    <!-- Retro Winamp / Milkdrop OSD -->
+    <div id="osd-hud" class="absolute top-4 left-4 z-20 pointer-events-none flex flex-col gap-1 text-xs font-mono text-cyan-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
+        <div class="flex items-center gap-2">
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" id="osd-dot"></span>
+            <span id="osd-preset" class="font-bold text-sm tracking-wide text-white uppercase">PRESET: GOOM HYPERDRIVE</span>
+        </div>
+        <div class="flex items-center gap-3 text-[11px] text-slate-300 font-mono">
+            <span id="osd-fps" class="text-emerald-400">FPS: 60</span>
+            <span id="osd-bpm" class="text-amber-400">BPM: 120</span>
+            <span id="osd-audio-mode" class="text-purple-300">AUDIO: SYNTHWAVE</span>
+            <span id="osd-beat" class="px-1 py-0.2 rounded bg-rose-500/20 text-rose-300 text-[10px] hidden font-bold">BEAT</span>
+            <span id="osd-vj" class="px-1.5 py-0.5 rounded bg-fuchsia-500/20 text-fuchsia-300 text-[10px] hidden font-bold items-center gap-1">
+                <i class="fa-solid fa-gamepad text-[9px]"></i> <span id="osd-vj-label">VJ RIG</span>
+            </span>
+        </div>
+    </div>
+
+    <!-- Top Action Toolbar -->
+    <header class="relative z-20 w-full px-4 py-3 flex items-center justify-between pointer-events-auto">
+        <!-- Logo / Title -->
+        <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                <i class="fa-solid fa-atom text-white text-base animate-spin" style="animation-duration: 12s;"></i>
+            </div>
+            <div class="hidden sm:block">
+                <h1 class="font-retro font-bold text-sm tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-sky-200 to-fuchsia-400">PROJECT-M & GOOM</h1>
+                <p class="text-[10px] text-slate-400 tracking-wider font-mono">GLSL WARP • DEMOSCENE FX</p>
+            </div>
+        </div>
+
+        <!-- Audio Source & Tool Buttons -->
+        <div class="flex items-center gap-1.5 sm:gap-2">
+            <!-- Synth Play/Pause -->
+            <button id="btn-toggle-synth" title="Toggle Built-in Synthesizer" class="glass-panel px-3 py-1.5 h-9 rounded-xl flex items-center gap-1.5 text-xs text-emerald-300 hover:text-white hover:bg-emerald-500/20 transition active:scale-95">
+                <i class="fa-solid fa-play" id="icon-synth-play"></i>
+                <span id="label-synth-status" class="hidden md:inline font-mono">Synth Play</span>
+            </button>
+
+            <!-- Groove Selector -->
+            <button id="btn-groove" title="Switch Synthesizer Groove (G)" class="glass-panel px-2.5 py-1.5 h-9 rounded-xl flex items-center gap-1.5 text-xs text-indigo-300 hover:text-white hover:bg-indigo-500/20 transition">
+                <i class="fa-solid fa-music"></i>
+                <span id="label-groove" class="font-mono text-[11px] hidden lg:inline">Synthwave</span>
+            </button>
+
+            <!-- Mic Capture -->
+            <button id="btn-mic" title="Use Live Microphone Input" class="glass-panel w-9 h-9 rounded-xl flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition active:scale-95">
+                <i class="fa-solid fa-microphone text-xs"></i>
+            </button>
+
+            <!-- Tab / System Audio Capture -->
+            <button id="btn-tab-audio" title="Capture Audio from YouTube/Spotify Tab" class="glass-panel px-2.5 py-1.5 h-9 rounded-xl flex items-center gap-1.5 text-xs text-cyan-300 hover:text-white hover:bg-cyan-500/20 transition active:scale-95">
+                <i class="fa-solid fa-window-restore text-xs"></i>
+                <span class="font-mono text-[11px] hidden sm:inline">Tab Audio</span>
+            </button>
+
+            <!-- Audio File Upload -->
+            <label title="Play MP3/WAV/Audio File" class="glass-panel w-9 h-9 rounded-xl flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition cursor-pointer active:scale-95">
+                <i class="fa-solid fa-folder-open text-xs"></i>
+                <input type="file" id="audio-file-input" accept="audio/*" class="hidden">
+            </label>
+
+            <!-- Tap BPM Tempo -->
+            <button id="btn-tap-tempo" title="Tap Tempo to sync BPM (T)" class="glass-panel px-2.5 py-1.5 h-9 rounded-xl flex items-center gap-1 text-xs text-amber-300 hover:text-white hover:bg-amber-500/20 transition active:scale-95">
+                <i class="fa-solid fa-drum text-xs"></i>
+                <span class="font-mono text-[11px]">TAP</span>
+            </button>
+
+            <!-- Snapshot / Screenshot -->
+            <button id="btn-snapshot" title="Take HD Screenshot (S)" class="glass-panel w-9 h-9 rounded-xl flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition active:scale-95">
+                <i class="fa-solid fa-camera text-xs"></i>
+            </button>
+
+            <!-- 60 FPS Video Recorder -->
+            <button id="btn-record" title="Record 60 FPS Video Clip (R)" class="glass-panel px-2.5 py-1.5 h-9 rounded-xl flex items-center gap-1.5 text-xs text-rose-300 hover:text-white hover:bg-rose-500/20 transition active:scale-95">
+                <span class="w-2 h-2 rounded-full bg-rose-500" id="rec-dot"></span>
+                <span id="label-record" class="font-mono text-[11px]">REC</span>
+            </button>
+
+            <!-- VJ Controller Rig (MIDI & Gamepad) Button -->
+            <button id="btn-toggle-vj" title="Open VJ Controller Rig (M)" class="glass-panel px-2.5 py-1.5 h-9 rounded-xl flex items-center gap-1.5 text-xs text-fuchsia-300 hover:text-white hover:bg-fuchsia-500/20 transition active:scale-95">
+                <i class="fa-solid fa-gamepad text-xs"></i>
+                <span class="font-mono font-medium hidden sm:inline">VJ Rig</span>
+            </button>
+
+            <!-- Post-FX CRT Rack Button -->
+            <button id="btn-toggle-fx" title="Toggle CRT & Bloom FX Rack (V)" class="glass-panel w-9 h-9 rounded-xl flex items-center justify-center text-cyan-300 hover:text-white hover:bg-cyan-500/20 transition active:scale-95">
+                <i class="fa-solid fa-tv text-xs"></i>
+            </button>
+
+            <!-- Live Milkdrop Studio Button -->
+            <button id="btn-toggle-editor" title="Open Milkdrop Formula Studio (E)" class="glass-panel px-2.5 py-1.5 h-9 rounded-xl flex items-center gap-1.5 text-xs text-amber-300 hover:text-white hover:bg-amber-500/20 transition active:scale-95">
+                <i class="fa-solid fa-code text-xs"></i>
+                <span class="font-mono font-medium hidden sm:inline">Studio</span>
+            </button>
+
+            <!-- Fullscreen -->
+            <button id="btn-fullscreen" title="Toggle Fullscreen (F)" class="glass-panel w-9 h-9 rounded-xl flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition active:scale-95">
+                <i class="fa-solid fa-expand text-xs"></i>
+            </button>
+        </div>
+    </header>
+
+    <div id="toast" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 opacity-0 -translate-y-2 glass-panel px-4 py-2 rounded-xl text-xs font-mono text-cyan-300 flex items-center gap-2 border border-cyan-500/30">
+        <i class="fa-solid fa-circle-info" id="toast-icon"></i>
+        <span id="toast-msg">Notification</span>
+    </div>
+
+    <section id="controls-drawer" class="relative z-20 w-[95%] max-w-5xl mx-auto mb-4 transition-all duration-300 glass-panel rounded-2xl p-4 sm:p-5">
+        <!-- Preset Selector Strip -->
+        <div class="flex items-center gap-2 pb-3 mb-3 border-b border-white/10">
+            <button id="btn-prev-preset" title="Previous Preset (Left Arrow)" class="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center transition">
+                <i class="fa-solid fa-chevron-left text-xs"></i>
+            </button>
+            <div id="preset-strip" class="flex-1 flex gap-2 overflow-x-auto no-scrollbar py-1">
+                <!-- Preset pills injected dynamically -->
+            </div>
+            <button id="btn-next-preset" title="Next Preset (Right Arrow)" class="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center transition">
+                <i class="fa-solid fa-chevron-right text-xs"></i>
+            </button>
+            <button id="btn-random-preset" title="Shuffle Random Preset (Space)" class="px-2.5 h-8 rounded-lg bg-indigo-600/30 hover:bg-indigo-500/40 text-indigo-300 border border-indigo-500/30 flex items-center gap-1.5 text-xs font-mono transition">
+                <i class="fa-solid fa-shuffle text-xs"></i>
+                <span class="hidden sm:inline">Shuffle</span>
+            </button>
+        </div>
+
+        <!-- Realtime Audio & Visual Parameter Sliders -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+            <div>
+                <div class="flex justify-between text-slate-400 mb-1">
+                    <span>Sensitivity</span>
+                    <span id="val-sens" class="text-cyan-400">1.8</span>
+                </div>
+                <input type="range" id="slider-sens" min="0.5" max="4.0" step="0.1" value="1.8" class="w-full">
+            </div>
+            <div>
+                <div class="flex justify-between text-slate-400 mb-1">
+                    <span>Feedback Decay</span>
+                    <span id="val-decay" class="text-cyan-400">0.965</span>
+                </div>
+                <input type="range" id="slider-decay" min="0.85" max="0.995" step="0.005" value="0.965" class="w-full">
+            </div>
+            <div>
+                <div class="flex justify-between text-slate-400 mb-1">
+                    <span>Warp Intensity</span>
+                    <span id="val-warp" class="text-cyan-400">1.0</span>
+                </div>
+                <input type="range" id="slider-warp" min="0.1" max="2.5" step="0.1" value="1.0" class="w-full">
+            </div>
+            <div>
+                <div class="flex justify-between text-slate-400 mb-1">
+                    <span>Color Cycle Speed</span>
+                    <span id="val-speed" class="text-cyan-400">1.0</span>
+                </div>
+                <input type="range" id="slider-speed" min="0.0" max="3.0" step="0.1" value="1.0" class="w-full">
+            </div>
+        </div>
+
+        <!-- Secondary Toggles and CRT Post-FX Expandable Section -->
+        <div class="flex items-center justify-between flex-wrap gap-2 mt-3 pt-3 border-t border-white/10 text-xs">
+            <div class="flex items-center gap-4 flex-wrap">
+                <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+                    <input type="checkbox" id="check-postfx" checked class="rounded border-slate-700 bg-slate-800 text-cyan-500 focus:ring-0">
+                    <span>CRT Post-FX</span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+                    <input type="checkbox" id="check-particles" checked class="rounded border-slate-700 bg-slate-800 text-cyan-500 focus:ring-0">
+                    <span>Supernova Sparks</span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+                    <input type="checkbox" id="check-tentacles" checked class="rounded border-slate-700 bg-slate-800 text-cyan-500 focus:ring-0">
+                    <span>Bio-Tentacles</span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+                    <input type="checkbox" id="check-autocycle" class="rounded border-slate-700 bg-slate-800 text-cyan-500 focus:ring-0">
+                    <span>Auto-Cycle (15s)</span>
+                </label>
+            </div>
+            <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+                <span>[H] Hide HUD</span>
+                <span class="hidden md:inline">• [SPACE] Shuffle</span>
+                <span class="hidden md:inline">• [E] Formula Studio</span>
+                <span class="hidden md:inline">• [M] VJ Rig</span>
+                <span class="hidden md:inline">• [V] CRT FX</span>
+            </div>
+        </div>
+
+        <!-- Expandable CRT & Bloom FX Rack -->
+        <div id="fx-rack-panel" class="mt-3 pt-3 border-t border-cyan-500/20 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px] font-mono">
+            <div>
+                <div class="flex justify-between text-slate-400 mb-1">
+                    <span>CRT Curvature</span>
+                    <span id="val-crt-curve" class="text-cyan-400">0.14</span>
+                </div>
+                <input type="range" id="slider-crt-curve" min="0.0" max="0.4" step="0.02" value="0.14" class="w-full">
+            </div>
+            <div>
+                <div class="flex justify-between text-slate-400 mb-1">
+                    <span>Scanlines Density</span>
+                    <span id="val-scanlines" class="text-cyan-400">0.45</span>
+                </div>
+                <input type="range" id="slider-scanlines" min="0.0" max="1.0" step="0.05" value="0.45" class="w-full">
+            </div>
+            <div>
+                <div class="flex justify-between text-slate-400 mb-1">
+                    <span>RGB Aberration</span>
+                    <span id="val-chroma" class="text-cyan-400">0.007</span>
+                </div>
+                <input type="range" id="slider-chroma" min="0.0" max="0.02" step="0.001" value="0.007" class="w-full">
+            </div>
+            <div>
+                <div class="flex justify-between text-slate-400 mb-1">
+                    <span>Beat Bloom Flash</span>
+                    <span id="val-bloom" class="text-cyan-400">0.65</span>
+                </div>
+                <input type="range" id="slider-bloom" min="0.0" max="1.5" step="0.05" value="0.65" class="w-full">
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide-Over Live MilkDrop Formula & GLSL Studio -->
+    <aside id="studio-drawer" class="fixed top-0 right-0 h-full w-full sm:w-[540px] z-50 glass-panel border-l border-white/10 transition-transform duration-300 translate-x-full flex flex-col shadow-2xl backdrop-blur-2xl">
+        <!-- Studio Header -->
+        <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/10 bg-black/40">
+            <div class="flex items-center gap-2">
+                <div class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></div>
+                <h2 class="font-retro font-bold text-sm text-amber-300 tracking-wider uppercase">MilkDrop Formula Studio</h2>
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="btn-save-as-new-preset" title="Save Active State As New Preset" class="px-2.5 py-1 text-xs rounded-lg bg-emerald-600/30 hover:bg-emerald-500/40 text-emerald-300 border border-emerald-500/40 transition flex items-center gap-1.5 font-mono">
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    <span>Save Preset</span>
+                </button>
+                <button id="btn-close-studio" class="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Studio Mode Tabs -->
+        <div class="flex border-b border-white/10 bg-black/20 text-xs font-mono">
+            <button id="tab-btn-glsl" class="flex-1 py-2.5 text-center font-semibold text-amber-300 border-b-2 border-amber-400 bg-white/5 transition flex items-center justify-center gap-2">
+                <i class="fa-solid fa-cube"></i>
+                <span>GLSL Warp Shader</span>
+            </button>
+            <button id="tab-btn-json" class="flex-1 py-2.5 text-center font-semibold text-slate-400 border-b-2 border-transparent hover:text-slate-200 transition flex items-center justify-center gap-2">
+                <i class="fa-solid fa-file-code"></i>
+                <span>Preset JSON (I/O)</span>
+            </button>
+        </div>
+
+        <!-- GLSL Warp Shader Tab Content -->
+        <div id="tab-content-glsl" class="flex-1 flex flex-col p-4 overflow-y-auto no-scrollbar space-y-3">
+            <div class="flex items-center justify-between text-xs">
+                <div class="flex items-center gap-2">
+                    <span class="text-slate-400 font-mono">Formula:</span>
+                    <select id="glsl-templates" class="bg-black/60 border border-white/20 text-cyan-300 text-xs rounded-lg px-2 py-1 outline-none focus:border-amber-400 font-mono">
+                        <option value="vortex">Starfield Vortex Warp</option>
+                        <option value="ripple">Liquid Plasma Ripple</option>
+                        <option value="mobius">Hyperbolic Möbius Twist</option>
+                        <option value="kaleido">Sacred 6-Fold Kaleidoscope</option>
+                        <option value="droste">Infinite Droste Log Tunnel</option>
+                        <option value="shockwave">Sub-Bass Reactive Shock</option>
+                    </select>
+                </div>
+                <button id="btn-reset-glsl" class="text-[11px] font-mono text-slate-400 hover:text-rose-300 transition">Reset Default</button>
+            </div>
+
+            <!-- Code Editor Area -->
+            <div class="relative flex-1 min-h-[260px] flex flex-col rounded-xl overflow-hidden border border-white/15 bg-[#080a12]">
+                <div class="px-3 py-1.5 bg-black/60 border-b border-white/10 flex items-center justify-between text-[11px] font-mono text-slate-400">
+                    <span>void main() { ... warpedUV = ...; }</span>
+                    <span id="compiler-status" class="text-emerald-400 flex items-center gap-1">
+                        <i class="fa-solid fa-circle-check"></i> Ready
+                    </span>
+                </div>
+                <textarea id="glsl-code-editor" spellcheck="false" class="flex-1 p-3 bg-transparent text-amber-200 font-mono text-xs leading-relaxed outline-none resize-none no-scrollbar selection:bg-amber-500/30"></textarea>
+            </div>
+
+            <!-- Uniforms Cheatsheet -->
+            <div class="glass-panel p-2.5 rounded-xl text-[11px] font-mono text-slate-400 space-y-1">
+                <div class="text-cyan-300 font-semibold text-xs flex items-center gap-1.5">
+                    <i class="fa-solid fa-circle-info"></i> Injected Shader Variables:
+                </div>
+                <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-slate-400">
+                    <div><code class="text-amber-300">vec2 uv</code>: Coords [0,1]</div>
+                    <div><code class="text-amber-300">vec2 center</code>: Dynamic Center</div>
+                    <div><code class="text-amber-300">vec2 dir</code>: uv - center</div>
+                    <div><code class="text-amber-300">float dist</code>: length(dir)</div>
+                    <div><code class="text-amber-300">float angle</code>: atan(dir.y, dir.x)</div>
+                    <div><code class="text-amber-300">float u_time</code>: Elapsed Seconds</div>
+                    <div><code class="text-amber-300">float u_bass</code>: Bass Energy</div>
+                    <div><code class="text-amber-300">float u_treble</code>: Treble Energy</div>
+                    <div><code class="text-amber-300">float u_zoom</code>: Zoom Scale</div>
+                    <div><code class="text-amber-300">float u_swirl</code>: Swirl Factor</div>
+                </div>
+                <div class="text-[10px] text-slate-500 pt-0.5">Assign result: <code class="text-emerald-300">warpedUV = ...;</code></div>
+            </div>
+
+            <!-- Compile Action Bar -->
+            <button id="btn-compile-glsl" class="py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-semibold font-mono text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20">
+                <i class="fa-solid fa-bolt"></i>
+                <span>Compile & Apply (Ctrl+Enter)</span>
+            </button>
+        </div>
+
+        <!-- Preset JSON (I/O) Tab Content -->
+        <div id="tab-content-json" class="flex-1 flex-col p-4 overflow-y-auto no-scrollbar space-y-3 hidden">
+            <div class="flex items-center justify-between text-xs">
+                <span class="text-slate-400 font-mono">Active Preset Schema:</span>
+                <span class="text-[11px] font-mono text-cyan-400" id="json-preset-name">Goom Hyperdrive</span>
+            </div>
+
+            <div class="relative flex-1 min-h-[280px] flex flex-col rounded-xl overflow-hidden border border-white/15 bg-[#080a12]">
+                <textarea id="json-code-editor" spellcheck="false" class="flex-1 p-3 bg-transparent text-cyan-200 font-mono text-xs leading-relaxed outline-none resize-none no-scrollbar selection:bg-cyan-500/30"></textarea>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <button id="btn-copy-json" class="py-2 px-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-mono transition flex items-center justify-center gap-1.5 border border-white/10">
+                    <i class="fa-regular fa-copy"></i>
+                    <span>Copy</span>
+                </button>
+                <button id="btn-download-json" class="py-2 px-2.5 rounded-xl bg-cyan-600/30 hover:bg-cyan-500/40 text-cyan-200 text-xs font-mono transition flex items-center justify-center gap-1.5 border border-cyan-500/40">
+                    <i class="fa-solid fa-download"></i>
+                    <span>Export</span>
+                </button>
+                <label class="py-2 px-2.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-500/40 text-indigo-200 text-xs font-mono transition flex items-center justify-center gap-1.5 border border-indigo-500/40 cursor-pointer text-center">
+                    <i class="fa-solid fa-upload"></i>
+                    <span>Import</span>
+                    <input type="file" id="json-file-input" accept=".json,application/json" class="hidden">
+                </label>
+                <button id="btn-apply-json" class="py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-mono transition flex items-center justify-center gap-1.5 shadow-md">
+                    <i class="fa-solid fa-check"></i>
+                    <span>Apply</span>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Slide-Over VJ Controller Rig (Web MIDI & Gamepad) -->
+    <aside id="vj-drawer" class="fixed top-0 left-0 h-full w-full sm:w-[500px] z-50 glass-panel border-r border-white/10 transition-transform duration-300 -translate-x-full flex flex-col shadow-2xl backdrop-blur-2xl">
+        <!-- VJ Header -->
+        <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/10 bg-black/40">
+            <div class="flex items-center gap-2">
+                <div class="w-2.5 h-2.5 rounded-full bg-fuchsia-400 animate-pulse"></div>
+                <h2 class="font-retro font-bold text-sm text-fuchsia-300 tracking-wider uppercase">VJ Performance Rig</h2>
+            </div>
+            <div class="flex items-center gap-2">
+                <span id="vj-status-badge" class="px-2 py-0.5 text-[10px] font-mono rounded bg-white/10 text-slate-300">Ready</span>
+                <button id="btn-close-vj" class="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Scrollable VJ Rig Content -->
+        <div class="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4 text-xs font-mono">
+            <!-- Hardware Connection Status Banner -->
+            <div class="grid grid-cols-2 gap-2">
+                <div class="p-3 rounded-xl bg-black/40 border border-white/10 flex items-center gap-2.5">
+                    <div id="vj-midi-dot" class="w-2.5 h-2.5 rounded-full bg-slate-600"></div>
+                    <div>
+                        <div class="text-slate-400 text-[10px]">WEB MIDI ACCESS</div>
+                        <div id="vj-midi-device" class="text-slate-200 font-semibold truncate text-[11px]">No MIDI Device</div>
+                    </div>
+                </div>
+                <div class="p-3 rounded-xl bg-black/40 border border-white/10 flex items-center gap-2.5">
+                    <div id="vj-pad-dot" class="w-2.5 h-2.5 rounded-full bg-slate-600"></div>
+                    <div>
+                        <div class="text-slate-400 text-[10px]">GAMEPAD CONTROLLER</div>
+                        <div id="vj-pad-device" class="text-slate-200 font-semibold truncate text-[11px]">Press Any Button</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gamepad Live Analog Flight Visualizer -->
+            <div class="p-3.5 rounded-xl bg-black/40 border border-fuchsia-500/20 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="text-fuchsia-300 font-semibold flex items-center gap-1.5">
+                        <i class="fa-solid fa-gamepad"></i> Analog Flight Deck (Gamepad)
+                    </span>
+                    <span id="vj-gamepad-index" class="text-[10px] text-slate-500">IDLE</span>
+                </div>
+
+                <!-- Dual Stick & Trigger Visualizer -->
+                <div class="grid grid-cols-2 gap-3 py-1">
+                    <!-- Left Stick -->
+                    <div class="flex flex-col items-center bg-black/30 p-2.5 rounded-lg border border-white/5">
+                        <span class="text-[10px] text-slate-400 mb-1">Left Stick (Vortex Steering)</span>
+                        <div class="relative w-20 h-20 rounded-full border border-white/20 bg-slate-900/60 flex items-center justify-center">
+                            <div class="absolute w-full h-[1px] bg-white/10"></div>
+                            <div class="absolute h-full w-[1px] bg-white/10"></div>
+                            <div id="vj-stick-left" class="w-5 h-5 rounded-full bg-fuchsia-500/80 shadow-[0_0_8px_#d946ef] transition-transform duration-75"></div>
+                        </div>
+                        <span id="vj-stick-left-coords" class="text-[10px] text-slate-500 mt-1">X: 0.00 | Y: 0.00</span>
+                    </div>
+
+                    <!-- Right Stick -->
+                    <div class="flex flex-col items-center bg-black/30 p-2.5 rounded-lg border border-white/5">
+                        <span class="text-[10px] text-slate-400 mb-1">Right Stick (Zoom & Spin)</span>
+                        <div class="relative w-20 h-20 rounded-full border border-white/20 bg-slate-900/60 flex items-center justify-center">
+                            <div class="absolute w-full h-[1px] bg-white/10"></div>
+                            <div class="absolute h-full w-[1px] bg-white/10"></div>
+                            <div id="vj-stick-right" class="w-5 h-5 rounded-full bg-cyan-500/80 shadow-[0_0_8px_#06b6d4] transition-transform duration-75"></div>
+                        </div>
+                        <span id="vj-stick-right-coords" class="text-[10px] text-slate-500 mt-1">Zoom: 1.00 | Spin: 0.00</span>
+                    </div>
+                </div>
+
+                <!-- Gamepad Button Mappings Legend -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px]">
+                    <div class="p-1.5 rounded bg-white/5 flex items-center justify-between">
+                        <span class="text-slate-400"><b class="text-white">A</b> (Cross)</span>
+                        <span class="text-rose-400">Strobe / Wave</span>
+                    </div>
+                    <div class="p-1.5 rounded bg-white/5 flex items-center justify-between">
+                        <span class="text-slate-400"><b class="text-white">B</b> (Circle)</span>
+                        <span class="text-amber-400">Shuffle Preset</span>
+                    </div>
+                    <div class="p-1.5 rounded bg-white/5 flex items-center justify-between">
+                        <span class="text-slate-400"><b class="text-white">X</b> (Square)</span>
+                        <span class="text-emerald-400">Tap Tempo</span>
+                    </div>
+                    <div class="p-1.5 rounded bg-white/5 flex items-center justify-between">
+                        <span class="text-slate-400"><b class="text-white">Y</b> (Delta)</span>
+                        <span class="text-indigo-400">Next Groove</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Web MIDI CC & Pad Monitor -->
+            <div class="p-3.5 rounded-xl bg-black/40 border border-cyan-500/20 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="text-cyan-300 font-semibold flex items-center gap-1.5">
+                        <i class="fa-solid fa-sliders"></i> MIDI CC Mapping & Activity
+                    </span>
+                    <button id="btn-request-midi" class="px-2 py-0.5 text-[10px] rounded bg-cyan-600/30 text-cyan-300 hover:bg-cyan-500/40 border border-cyan-500/30 transition">
+                        Connect MIDI
+                    </button>
+                </div>
+
+                <!-- Active MIDI CC Fader Meters -->
+                <div class="grid grid-cols-2 gap-2 text-[10px]">
+                    <div class="p-2 rounded bg-black/30 border border-white/5 space-y-1">
+                        <div class="flex justify-between text-slate-400">
+                            <span>CC 1 (Mod Wheel): Warp</span>
+                            <span id="vj-cc-val-1" class="text-cyan-400">1.00</span>
+                        </div>
+                        <div class="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
+                            <div id="vj-cc-bar-1" class="h-full bg-cyan-400 rounded-full w-1/2 transition-all duration-75"></div>
+                        </div>
+                    </div>
+                    <div class="p-2 rounded bg-black/30 border border-white/5 space-y-1">
+                        <div class="flex justify-between text-slate-400">
+                            <span>CC 7 (Volume): Sens</span>
+                            <span id="vj-cc-val-7" class="text-cyan-400">1.80</span>
+                        </div>
+                        <div class="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
+                            <div id="vj-cc-bar-7" class="h-full bg-cyan-400 rounded-full w-1/2 transition-all duration-75"></div>
+                        </div>
+                    </div>
+                    <div class="p-2 rounded bg-black/30 border border-white/5 space-y-1">
+                        <div class="flex justify-between text-slate-400">
+                            <span>CC 10 (Pan): Decay</span>
+                            <span id="vj-cc-val-10" class="text-cyan-400">0.965</span>
+                        </div>
+                        <div class="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
+                            <div id="vj-cc-bar-10" class="h-full bg-cyan-400 rounded-full w-1/2 transition-all duration-75"></div>
+                        </div>
+                    </div>
+                    <div class="p-2 rounded bg-black/30 border border-white/5 space-y-1">
+                        <div class="flex justify-between text-slate-400">
+                            <span>CC 74 (Brightness): Bloom</span>
+                            <span id="vj-cc-val-74" class="text-cyan-400">0.65</span>
+                        </div>
+                        <div class="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
+                            <div id="vj-cc-bar-74" class="h-full bg-cyan-400 rounded-full w-1/2 transition-all duration-75"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MIDI Note Key Hit Flash Indicator -->
+                <div class="p-2.5 rounded bg-black/30 border border-white/5 flex items-center justify-between text-[11px]">
+                    <span class="text-slate-400">Keyboard / Drum Pad Trigger:</span>
+                    <span id="vj-midi-last-note" class="px-2 py-0.5 rounded bg-white/10 text-slate-400 font-bold">Waiting for Note</span>
+                </div>
+            </div>
+
+            <!-- VJ Performance Quick Tips -->
+            <div class="glass-panel p-2.5 rounded-xl text-[10px] text-slate-400 space-y-1">
+                <div class="text-fuchsia-300 font-semibold text-[11px] flex items-center gap-1.5">
+                    <i class="fa-solid fa-bolt"></i> Live Performance Tips:
+                </div>
+                <div>• Any USB MIDI keyboard or DJ mixer with rotary knobs works with standard CC parameters.</div>
+                <div>• Connect any Bluetooth or USB Gamepad (Xbox, DualShock, Switch Pro) and push any button to activate.</div>
+                <div>• Strike drum pads to trigger real-time color strobes and center shockwave displacement ripples.</div>
+            </div>
+        </div>
+    </aside>
+
+    <script>
+        // Preset Registry
+        const PRESETS = [
+            { id: 'hyperdrive', name: 'Goom Hyperdrive', warpType: 0, zoom: 0.992, rot: 0.003, swirl: 0.8, decay: 0.965, tentacles: true, tentacleCount: 12, shapeStyle: 'hyperdrive', colorSpeed: 1.0, palette: 0, waveformStyle: 'lissajous' },
+            { id: 'tesseract', name: '3D Cyber Tesseract', warpType: 4, zoom: 0.995, rot: 0.001, swirl: 0.4, decay: 0.96, tentacles: false, shapeStyle: 'tesseract', colorSpeed: 1.2, palette: 4, waveformStyle: 'rings' },
+            { id: 'torus', name: '3D Hyper-Torus', warpType: 10, zoom: 0.99, rot: 0.004, swirl: 0.7, decay: 0.97, tentacles: true, tentacleCount: 8, shapeStyle: 'torus3d', colorSpeed: 1.4, palette: 7, waveformStyle: 'lissajous' },
+            { id: 'cybergrid', name: 'Neon Cyber Grid 3D', warpType: 4, zoom: 0.998, rot: 0.0, swirl: 0.1, decay: 0.965, tentacles: false, shapeStyle: 'cybergrid', colorSpeed: 0.8, palette: 4, waveformStyle: 'line' },
+            { id: 'acid', name: 'Milkdrop Acid Spiral', warpType: 1, zoom: 1.008, rot: 0.006, swirl: 1.5, decay: 0.975, tentacles: true, tentacleCount: 8, shapeStyle: 'lissajous', colorSpeed: 1.5, palette: 1, waveformStyle: 'lissajous' },
+            { id: 'singularity', name: 'Cosmic Singularity', warpType: 5, zoom: 0.985, rot: 0.005, swirl: 2.0, decay: 0.975, tentacles: false, shapeStyle: 'singularity', colorSpeed: 0.9, palette: 7, waveformStyle: 'rings' },
+            { id: 'cymatics', name: 'Chladni Sound Cymatics', warpType: 7, zoom: 0.996, rot: 0.002, swirl: 0.5, decay: 0.972, tentacles: false, shapeStyle: 'cymatics', colorSpeed: 0.7, palette: 8, waveformStyle: 'star' },
+            { id: 'spiro', name: 'Laser Spirograph', warpType: 12, zoom: 0.994, rot: 0.007, swirl: 1.2, decay: 0.98, tentacles: false, shapeStyle: 'harmonograph', colorSpeed: 1.3, palette: 0, waveformStyle: 'lissajous' },
+            { id: 'jellyfish', name: 'Goom Bio-Jellyfish', warpType: 2, zoom: 0.995, rot: 0.002, swirl: 0.6, decay: 0.965, tentacles: true, tentacleCount: 16, shapeStyle: 'biojellyfish', colorSpeed: 1.0, palette: 2, waveformStyle: 'line' },
+            { id: 'dna', name: '3D Quantum DNA Helix', warpType: 11, zoom: 0.991, rot: 0.003, swirl: 0.9, decay: 0.968, tentacles: false, shapeStyle: 'dnahelix', colorSpeed: 1.1, palette: 6, waveformStyle: 'rings' },
+            { id: 'metaballs', name: 'Demoscene Liquid Metaballs', warpType: 7, zoom: 0.994, rot: 0.004, swirl: 0.8, decay: 0.97, tentacles: false, shapeStyle: 'metaballs', colorSpeed: 1.2, palette: 9, waveformStyle: 'star' },
+            { id: 'hexcrystal', name: 'Hex Crystal Matrix', warpType: 10, zoom: 0.993, rot: 0.001, swirl: 0.3, decay: 0.965, tentacles: false, shapeStyle: 'hexcrystal', colorSpeed: 1.0, palette: 11, waveformStyle: 'rings' },
+            { id: 'inferno', name: 'Goom Plasma Inferno', warpType: 7, zoom: 0.99, rot: 0.002, swirl: 0.4, decay: 0.965, tentacles: true, tentacleCount: 6, shapeStyle: 'inferno', colorSpeed: 1.3, palette: 5, waveformStyle: 'line' },
+            { id: 'mandala', name: 'Sacred Mandala', warpType: 3, zoom: 1.002, rot: 0.004, swirl: 0.7, decay: 0.968, tentacles: false, shapeStyle: 'mandala', colorSpeed: 1.1, palette: 3, waveformStyle: 'star' },
+            { id: 'aurora', name: 'Aurora Borealis', warpType: 2, zoom: 0.995, rot: 0.001, swirl: 0.3, decay: 0.96, tentacles: true, tentacleCount: 10, shapeStyle: 'aurora', colorSpeed: 0.9, palette: 6, waveformStyle: 'line' },
+            { id: 'equalizer', name: 'Winamp Radial Equalizer', warpType: 8, zoom: 0.995, rot: 0.003, swirl: 0.5, decay: 0.965, tentacles: false, shapeStyle: 'equalizer', colorSpeed: 1.0, palette: 0, waveformStyle: 'rings' }
+        ];
+
+        let currentPresetIndex = 0;
+        let userParams = {
+            sensitivity: 1.8,
+            decay: 0.965,
+            warp: 1.0,
+            colorSpeed: 1.0,
+            fxEnabled: true,
+            showParticles: true,
+            showTentacles: true,
+            autoCycle: false,
+            // Post FX
+            crtCurve: 0.14,
+            scanlines: 0.45,
+            chroma: 0.007,
+            bloom: 0.65
+        };
+
+        class AudioEngine {
+            constructor() {
+                this.ctx = null;
+                this.analyser = null;
+                this.freqData = new Uint8Array(256);
+                this.timeData = new Uint8Array(256);
+                this.destNode = null; // Mixed stream destination for video recording
+                
+                this.mode = 'synth'; // 'synth', 'mic', 'tab', 'file'
+                this.isPlayingSynth = false;
+                this.grooveIndex = 0;
+                this.grooveNames = ['Synthwave', '303 Acid', 'Ambient Lo-Fi'];
+                this.bpm = 120;
+                this.step = 0;
+                this.timerId = null;
+                
+                // Beat detection
+                this.beatCutoff = 0;
+                this.beatDecay = 0.95;
+                this.isBeat = false;
+                this.tapTimes = [];
+                
+                // Audio elements
+                this.mediaStream = null;
+                this.audioElement = null;
+            }
+
+            init() {
+                if (this.ctx) return;
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                this.ctx = new AudioContextClass();
+                
+                this.analyser = this.ctx.createAnalyser();
+                this.analyser.fftSize = 512;
+                this.analyser.smoothingTimeConstant = 0.8;
+                
+                this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
+                this.timeData = new Uint8Array(this.analyser.fftSize);
+
+                // Stream destination for synchronized video recording
+                this.destNode = this.ctx.createMediaStreamDestination();
+            }
+
+            resume() {
+                if (this.ctx && this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            // Synthesizer Drum & Synth Voices
+            triggerKick(time) {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(140, time);
+                osc.frequency.exponentialRampToValueAtTime(32, time + 0.14);
+                gain.gain.setValueAtTime(1.0, time);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + 0.32);
+                osc.connect(gain);
+                gain.connect(this.analyser);
+                gain.connect(this.ctx.destination);
+                gain.connect(this.destNode);
+                osc.start(time);
+                osc.stop(time + 0.35);
+            }
+
+            triggerSnare(time) {
+                if (!this.ctx) return;
+                const bufferSize = this.ctx.sampleRate * 0.12;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'highpass';
+                filter.frequency.setValueAtTime(1200, time);
+                
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0.6, time);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+                
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.analyser);
+                gain.connect(this.ctx.destination);
+                gain.connect(this.destNode);
+                noise.start(time);
+            }
+
+            triggerHat(time, open = false) {
+                if (!this.ctx) return;
+                const dur = open ? 0.22 : 0.05;
+                const bufferSize = Math.floor(this.ctx.sampleRate * dur);
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.setValueAtTime(8000, time);
+                filter.Q.value = 3;
+
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(open ? 0.4 : 0.2, time);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.analyser);
+                gain.connect(this.ctx.destination);
+                gain.connect(this.destNode);
+                noise.start(time);
+            }
+
+            triggerBassNote(freq, time, dur = 0.2, resonance = 8) {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const filter = this.ctx.createBiquadFilter();
+                const gain = this.ctx.createGain();
+
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(freq, time);
+
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(freq * 1.5, time);
+                filter.frequency.exponentialRampToValueAtTime(Math.min(freq * resonance, 4500), time + 0.05);
+                filter.frequency.exponentialRampToValueAtTime(freq * 1.2, time + dur);
+                filter.Q.value = resonance;
+
+                gain.gain.setValueAtTime(0.4, time);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+
+                osc.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.analyser);
+                gain.connect(this.ctx.destination);
+                gain.connect(this.destNode);
+                osc.start(time);
+                osc.stop(time + dur);
+            }
+
+            triggerLeadChord(freqs, time, dur = 0.3) {
+                if (!this.ctx) return;
+                freqs.forEach(freq => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, time);
+
+                    gain.gain.setValueAtTime(0.12, time);
+                    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+
+                    osc.connect(gain);
+                    gain.connect(this.analyser);
+                    gain.connect(this.ctx.destination);
+                    gain.connect(this.destNode);
+                    osc.start(time);
+                    osc.stop(time + dur);
+                });
+            }
+
+            startSynth() {
+                this.init();
+                this.resume();
+                this.isPlayingSynth = true;
+                this.mode = 'synth';
+                this.step = 0;
+                
+                const stepInterval = (60 / this.bpm) / 4 * 1000;
+                if (this.timerId) clearInterval(this.timerId);
+
+                this.timerId = setInterval(() => {
+                    if (!this.isPlayingSynth) return;
+                    const now = this.ctx.currentTime;
+                    const s = this.step % 16;
+                    
+                    if (this.grooveIndex === 0) { // Synthwave 120
+                        if (s % 4 === 0) this.triggerKick(now);
+                        if (s % 8 === 4) this.triggerSnare(now);
+                        if (s % 2 === 0) this.triggerHat(now, s === 14);
+                        // Bassline
+                        const bassNotes = [55, 55, 65.4, 55, 73.4, 55, 82.4, 65.4];
+                        if (s % 2 === 0) this.triggerBassNote(bassNotes[(s / 2) % 8], now, 0.18, 5);
+                        // Chords
+                        if (s === 0) this.triggerLeadChord([220, 261.63, 329.63], now, 0.8);
+                        if (s === 8) this.triggerLeadChord([196, 246.94, 293.66], now, 0.8);
+
+                    } else if (this.grooveIndex === 1) { // 303 Acid 135
+                        if (s === 0 || s === 6 || s === 10 || s === 12) this.triggerKick(now);
+                        if (s === 4 || s === 12) this.triggerSnare(now);
+                        this.triggerHat(now, s % 4 === 2);
+                        const acidFreqs = [65.4, 65.4, 130.8, 82.4, 110.0, 65.4, 98.0, 164.8];
+                        const res = 12 + Math.sin(now * 1.5) * 6;
+                        this.triggerBassNote(acidFreqs[s % 8], now, 0.12, res);
+
+                    } else { // Ambient LoFi 85
+                        if (s === 0 || s === 7) this.triggerKick(now);
+                        if (s === 8) this.triggerSnare(now);
+                        if (s % 4 === 0) this.triggerHat(now, true);
+                        if (s === 0) this.triggerLeadChord([174.61, 220, 261.63, 329.63], now, 1.4);
+                        if (s === 8) this.triggerLeadChord([146.83, 174.61, 220, 261.63], now, 1.4);
+                    }
+
+                    this.step++;
+                }, stepInterval);
+            }
+
+            stopSynth() {
+                this.isPlayingSynth = false;
+                if (this.timerId) {
+                    clearInterval(this.timerId);
+                    this.timerId = null;
+                }
+            }
+
+            cycleGroove() {
+                this.grooveIndex = (this.grooveIndex + 1) % this.grooveNames.length;
+                if (this.grooveIndex === 0) this.bpm = 120;
+                else if (this.grooveIndex === 1) this.bpm = 135;
+                else this.bpm = 85;
+
+                if (this.isPlayingSynth) {
+                    this.startSynth();
+                }
+                return this.grooveNames[this.grooveIndex];
+            }
+
+            async useMic() {
+                this.init();
+                this.resume();
+                this.stopSynth();
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    this.mediaStream = stream;
+                    const src = this.ctx.createMediaStreamSource(stream);
+                    src.connect(this.analyser);
+                    src.connect(this.destNode);
+                    this.mode = 'mic';
+                    return true;
+                } catch(e) {
+                    return false;
+                }
+            }
+
+            async useTabAudio() {
+                this.init();
+                this.resume();
+                this.stopSynth();
+                try {
+                    const stream = await navigator.mediaDevices.getDisplayMedia({
+                        video: true,
+                        audio: true
+                    });
+                    const audioTracks = stream.getAudioTracks();
+                    if (audioTracks.length === 0) {
+                        return false;
+                    }
+                    this.mediaStream = stream;
+                    const src = this.ctx.createMediaStreamSource(stream);
+                    src.connect(this.analyser);
+                    src.connect(this.ctx.destination);
+                    src.connect(this.destNode);
+                    this.mode = 'tab';
+                    return true;
+                } catch(e) {
+                    return false;
+                }
+            }
+
+            useFile(file) {
+                this.init();
+                this.resume();
+                this.stopSynth();
+                if (this.audioElement) {
+                    this.audioElement.pause();
+                    this.audioElement.src = '';
+                }
+                const url = URL.createObjectURL(file);
+                const audio = new Audio(url);
+                audio.crossOrigin = 'anonymous';
+                audio.loop = true;
+                this.audioElement = audio;
+
+                const src = this.ctx.createMediaElementSource(audio);
+                src.connect(this.analyser);
+                src.connect(this.ctx.destination);
+                src.connect(this.destNode);
+                audio.play();
+                this.mode = 'file';
+            }
+
+            tapTempo() {
+                const now = performance.now();
+                this.tapTimes.push(now);
+                if (this.tapTimes.length > 5) this.tapTimes.shift();
+                if (this.tapTimes.length >= 2) {
+                    const diffs = [];
+                    for (let i = 1; i < this.tapTimes.length; i++) {
+                        diffs.push(this.tapTimes[i] - this.tapTimes[i - 1]);
+                    }
+                    const avgDiff = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+                    this.bpm = Math.round(Math.min(220, Math.max(50, 60000 / avgDiff)));
+                    if (this.isPlayingSynth) this.startSynth();
+                }
+                return this.bpm;
+            }
+
+            updateAnalysis() {
+                if (!this.analyser) {
+                    return {
+                        bass: 0, mid: 0, treble: 0, level: 0, isBeat: false,
+                        freqData: this.freqData, timeData: this.timeData
+                    };
+                }
+                this.analyser.getByteFrequencyData(this.freqData);
+                this.analyser.getByteTimeDomainData(this.timeData);
+
+                // Energy extraction across bands
+                let bassSum = 0;
+                for (let i = 1; i < 8; i++) bassSum += this.freqData[i];
+                const rawBass = (bassSum / 7) / 255;
+
+                let midSum = 0;
+                for (let i = 8; i < 48; i++) midSum += this.freqData[i];
+                const rawMid = (midSum / 40) / 255;
+
+                let trebSum = 0;
+                for (let i = 48; i < 160; i++) trebSum += this.freqData[i];
+                const rawTreb = (trebSum / 112) / 255;
+
+                const level = (rawBass * 0.5 + rawMid * 0.3 + rawTreb * 0.2);
+
+                // Beat detection with dynamic threshold
+                this.isBeat = false;
+                if (rawBass > this.beatCutoff && rawBass > 0.45) {
+                    this.isBeat = true;
+                    this.beatCutoff = rawBass * 1.15;
+                } else {
+                    this.beatCutoff *= this.beatDecay;
+                    this.beatCutoff = Math.max(this.beatCutoff, 0.35);
+                }
+
+                return {
+                    bass: rawBass,
+                    mid: rawMid,
+                    treble: rawTreb,
+                    level: level,
+                    isBeat: this.isBeat,
+                    freqData: this.freqData,
+                    timeData: this.timeData
+                };
+            }
+        }
+
+        const VERTEX_SHADER_SRC = `
+            attribute vec2 a_position;
+            varying vec2 v_uv;
+            void main() {
+                v_uv = (a_position + 1.0) * 0.5;
+                gl_Position = vec4(a_position, 0.0, 1.0);
+            }
+        `;
+
+        const FRAGMENT_SHADER_SRC = `
+            precision highp float;
+            varying vec2 v_uv;
+
+            uniform sampler2D u_prev_frame;
+            uniform sampler2D u_current_draw;
+            uniform vec2 u_resolution;
+            uniform float u_time;
+            uniform float u_decay;
+            uniform float u_zoom;
+            uniform float u_rot;
+            uniform float u_swirl;
+            uniform float u_bass;
+            uniform float u_treble;
+            uniform float u_color_speed;
+            uniform int u_warp_type;
+            uniform int u_palette;
+            uniform vec2 u_shockwave_center;
+            uniform float u_shockwave_radius;
+            uniform vec2 u_mouse_offset;
+
+            vec3 getPalette(float t, int p) {
+                vec3 a = vec3(0.5, 0.5, 0.5);
+                vec3 b = vec3(0.5, 0.5, 0.5);
+                vec3 c = vec3(1.0, 1.0, 1.0);
+                vec3 d = vec3(0.0, 0.33, 0.67);
+
+                if (p == 0) { c = vec3(1.0, 1.0, 1.0); d = vec3(0.8, 0.2, 0.5); }
+                else if (p == 1) { c = vec3(2.0, 1.0, 0.0); d = vec3(0.5, 0.20, 0.25); }
+                else if (p == 2) { c = vec3(0.8, 0.9, 0.3); d = vec3(0.2, 0.8, 0.6); }
+                else if (p == 3) { c = vec3(1.0, 0.7, 0.4); d = vec3(0.0, 0.15, 0.20); }
+                else if (p == 4) { c = vec3(1.0, 1.0, 1.0); d = vec3(0.3, 0.2, 0.8); }
+                else if (p == 5) { a = vec3(0.5, 0.4, 0.3); b = vec3(0.5, 0.4, 0.3); c = vec3(1.0, 1.0, 0.5); d = vec3(0.0, 0.15, 0.20); }
+                else if (p == 6) { a = vec3(0.2, 0.5, 0.3); b = vec3(0.2, 0.5, 0.3); c = vec3(0.5, 1.0, 0.5); d = vec3(0.1, 0.4, 0.3); }
+                else if (p == 7) { a = vec3(0.5, 0.3, 0.6); b = vec3(0.5, 0.4, 0.5); c = vec3(1.2, 0.8, 1.5); d = vec3(0.5, 0.2, 0.7); }
+                else if (p == 8) { a = vec3(0.6, 0.4, 0.1); b = vec3(0.4, 0.3, 0.1); c = vec3(1.0, 0.7, 0.2); d = vec3(0.0, 0.1, 0.2); }
+                else if (p == 9) { a = vec3(0.8, 0.5, 0.4); b = vec3(0.2, 0.4, 0.2); c = vec3(2.0, 1.0, 1.0); d = vec3(0.0, 0.25, 0.25); }
+                else if (p == 10) { a = vec3(0.5, 0.9, 0.2); b = vec3(0.5, 0.5, 0.2); c = vec3(1.0, 1.5, 0.5); d = vec3(0.2, 0.7, 0.1); }
+                else if (p == 11) { a = vec3(0.3, 0.6, 0.9); b = vec3(0.3, 0.4, 0.6); c = vec3(0.8, 1.2, 1.4); d = vec3(0.1, 0.5, 0.9); }
+                return a + b * cos(6.28318 * (c * t + d));
+            }
+
+            void main() {
+                vec2 uv = v_uv;
+                vec2 center = vec2(0.5, 0.5) + u_mouse_offset;
+                vec2 dir = uv - center;
+                float dist = length(dir);
+                float angle = atan(dir.y, dir.x);
+
+                // Shockwave displacement
+                if (u_shockwave_radius > 0.0) {
+                    vec2 scDir = uv - u_shockwave_center;
+                    float scDist = length(scDir);
+                    float diff = abs(scDist - u_shockwave_radius);
+                    if (diff < 0.09) {
+                        float powWave = (1.0 - diff / 0.09);
+                        uv -= normalize(scDir) * powWave * 0.04;
+                    }
+                }
+
+                vec2 warpedUV = uv;
+                
+                #ifdef USE_CUSTOM_WARP
+                /* USER_CUSTOM_GLSL_WARP */
+                #else
+                if (u_warp_type == 0) { // Goom Hyperdrive
+                    float dynamicZoom = u_zoom - (u_bass * 0.04);
+                    float dynamicRot = u_rot + sin(dist * 8.0 - u_time * 2.0) * (u_swirl * 0.06);
+                    mat2 rotMatrix = mat2(cos(dynamicRot), -sin(dynamicRot), sin(dynamicRot), cos(dynamicRot));
+                    warpedUV = center + rotMatrix * (dir * dynamicZoom);
+                } else if (u_warp_type == 1) { // Milkdrop Acid Spiral
+                    float twist = angle + u_rot + (dist * u_swirl * 1.8);
+                    float dynamicZoom = u_zoom + (u_bass * 0.03);
+                    warpedUV = center + vec2(cos(twist), sin(twist)) * (dist * dynamicZoom);
+                } else if (u_warp_type == 2) { // Bio Fluid Ripple
+                    float waveX = sin(uv.y * 14.0 + u_time * 2.0) * 0.008 * (1.0 + u_treble * 2.0);
+                    float waveY = cos(uv.x * 14.0 + u_time * 2.0) * 0.008 * (1.0 + u_bass * 2.0);
+                    warpedUV = center + (dir * u_zoom) + vec2(waveX, waveY);
+                } else if (u_warp_type == 3) { // Kaleidoscope Portal
+                    float sides = 6.0;
+                    float tau = 6.2831853;
+                    float a = mod(angle, tau / sides) - (tau / sides * 0.5);
+                    a = abs(a);
+                    float r = dist * (u_zoom + u_bass * 0.03);
+                    warpedUV = center + vec2(cos(a + u_rot), sin(a + u_rot)) * r;
+                } else if (u_warp_type == 4) { // Retro Grid Tunnel
+                    vec2 normDir = dir * (u_zoom + u_bass * 0.03);
+                    normDir.x += sin(normDir.y * 6.0 + u_time) * 0.01;
+                    warpedUV = center + normDir;
+                } else if (u_warp_type == 5) { // Gravitational Lensing Wormhole
+                    float r = dist + 0.001;
+                    float deflection = 0.04 / (r * r + 0.08) * (1.0 + u_bass * 0.8);
+                    float twist = angle + u_rot + deflection * u_swirl;
+                    float newDist = dist * u_zoom - (deflection * 0.05);
+                    warpedUV = center + vec2(cos(twist), sin(twist)) * newDist;
+                } else if (u_warp_type == 7) { // Liquid Plasma Ripple
+                    float p1 = sin(uv.x * 12.0 + u_time * 2.2);
+                    float p2 = cos(uv.y * 12.0 - u_time * 1.8);
+                    float p3 = sin((uv.x + uv.y) * 10.0 + u_time * 1.5);
+                    vec2 ripple = vec2(p1 + p3, p2 + p3) * (0.006 * (1.0 + u_bass * 1.8));
+                    warpedUV = center + (dir * u_zoom) + ripple;
+                } else if (u_warp_type == 8) { // Escher Dual-Mirror
+                    vec2 mirrored = abs(dir);
+                    float angM = atan(mirrored.y, mirrored.x) + u_rot;
+                    float radM = length(mirrored) * u_zoom;
+                    vec2 rotated = vec2(cos(angM), sin(angM)) * radM;
+                    warpedUV = center + rotated * sign(dir);
+                } else if (u_warp_type == 10) { // Hexagonal Honeycomb Prism
+                    vec2 q = dir * 8.0;
+                    vec2 r = vec2(q.x * 1.73205 + q.y, q.y * 2.0) * 0.5;
+                    vec2 hexUV = fract(r) - 0.5;
+                    mat2 m = mat2(cos(u_rot), -sin(u_rot), sin(u_rot), cos(u_rot));
+                    warpedUV = center + (m * dir * u_zoom) + hexUV * 0.015 * (1.0 + u_treble * 2.0);
+                } else if (u_warp_type == 11) { // 3D Tube Wormhole
+                    float pZ = 1.0 / (dist + 0.08);
+                    float pA = angle / 3.1415926;
+                    vec2 tubeUV = vec2(pA + u_rot * 0.5, pZ * 0.15 + u_time * 0.2);
+                    warpedUV = center + (dir * u_zoom) + sin(tubeUV * 6.28) * 0.012;
+                } else if (u_warp_type == 12) { // Polar Logarithmic Pinwheel Spiral
+                    float arms = 5.0;
+                    float spiralAngle = angle * arms + log(dist + 0.01) * u_swirl * 4.0 + u_time;
+                    float modR = dist * (u_zoom + sin(spiralAngle) * 0.02 * (1.0 + u_bass));
+                    warpedUV = center + vec2(cos(angle + u_rot), sin(angle + u_rot)) * modR;
+                }
+                #endif
+
+                vec4 prevColor = texture2D(u_prev_frame, warpedUV);
+                prevColor.rgb *= u_decay;
+
+                // Subtle feedback color tint
+                float tColor = u_time * 0.2 * u_color_speed + dist * 0.5;
+                vec3 tint = getPalette(tColor, u_palette) * 0.018 * (1.0 + u_bass * 1.5);
+                prevColor.rgb += tint;
+
+                vec4 curDraw = texture2D(u_current_draw, v_uv);
+                vec3 outColor = prevColor.rgb + curDraw.rgb;
+                gl_FragColor = vec4(outColor, 1.0);
+            }
+        `;
+
+        const POST_FRAGMENT_SHADER_SRC = `
+            precision highp float;
+            varying vec2 v_uv;
+            uniform sampler2D u_scene;
+            uniform vec2 u_resolution;
+            uniform float u_time;
+            uniform float u_crt_curve;
+            uniform float u_scanlines;
+            uniform float u_chroma;
+            uniform float u_bloom;
+            uniform float u_bass;
+            uniform float u_beat_flash;
+            uniform bool u_fx_enabled;
+
+            vec2 curveUV(vec2 uv, float curve) {
+                if (curve <= 0.0) return uv;
+                vec2 st = uv * 2.0 - 1.0;
+                vec2 offset = st.yx / vec2(6.0, 4.0);
+                st = st + st * offset * offset * curve;
+                return st * 0.5 + 0.5;
+            }
+
+            void main() {
+                if (!u_fx_enabled) {
+                    gl_FragColor = texture2D(u_scene, v_uv);
+                    return;
+                }
+
+                vec2 uv = curveUV(v_uv, u_crt_curve);
+
+                // CRT screen edge vignette/mask
+                if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+                    gl_FragColor = vec4(0.01, 0.01, 0.02, 1.0);
+                    return;
+                }
+
+                // Audio-reactive chromatic aberration
+                vec2 dir = uv - 0.5;
+                float dynamicChroma = u_chroma * (1.0 + u_bass * 2.0);
+                vec2 rUV = uv + dir * dynamicChroma;
+                vec2 gUV = uv;
+                vec2 bUV = uv - dir * dynamicChroma;
+
+                float r = texture2D(u_scene, rUV).r;
+                float g = texture2D(u_scene, gUV).g;
+                float b = texture2D(u_scene, bUV).b;
+                vec3 color = vec3(r, g, b);
+
+                // Scanlines
+                if (u_scanlines > 0.0) {
+                    float scan = sin(uv.y * u_resolution.y * 1.5) * 0.5 + 0.5;
+                    color *= mix(1.0, 0.65 + 0.35 * scan, u_scanlines);
+                }
+
+                // Bloom highlights & transient beat flash
+                vec3 lum = color * color;
+                color += lum * (u_bloom * 0.6 + u_beat_flash * 1.2);
+                color += vec3(0.08, 0.12, 0.22) * u_beat_flash;
+
+                // Subtle edge vignette
+                float vig = uv.x * (1.0 - uv.x) * uv.y * (1.0 - uv.y) * 15.0;
+                vig = clamp(pow(vig, 0.25), 0.0, 1.0);
+                color *= vig;
+
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `;
+
+        class WebGLVisualizer {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.gl = canvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: true });
+                if (!this.gl) {
+                    throw new Error('WebGL not supported');
+                }
+                this.beatFlash = 0.0;
+                this.initPipeline();
+            }
+
+            initPipeline() {
+                const gl = this.gl;
+                this.program = this.createProgram(VERTEX_SHADER_SRC, FRAGMENT_SHADER_SRC);
+                this.postProgram = this.createProgram(VERTEX_SHADER_SRC, POST_FRAGMENT_SHADER_SRC);
+
+                // Fullscreen Quad Buffer
+                this.quadBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+                    -1, -1,  1, -1, -1,  1,
+                    -1,  1,  1, -1,  1,  1
+                ]), gl.STATIC_DRAW);
+
+                this.posAttrib = gl.getAttribLocation(this.program, 'a_position');
+                this.postPosAttrib = gl.getAttribLocation(this.postProgram, 'a_position');
+
+                this.cacheUniforms();
+                this.initFramebuffers();
+            }
+
+            createProgram(vsSrc, fsSrc) {
+                const gl = this.gl;
+                const vs = gl.createShader(gl.VERTEX_SHADER);
+                gl.shaderSource(vs, vsSrc);
+                gl.compileShader(vs);
+                if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
+                    throw new Error('VS Error: ' + gl.getShaderInfoLog(vs));
+                }
+
+                const fs = gl.createShader(gl.FRAGMENT_SHADER);
+                gl.shaderSource(fs, fsSrc);
+                gl.compileShader(fs);
+                if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+                    throw new Error('FS Error: ' + gl.getShaderInfoLog(fs));
+                }
+
+                const prog = gl.createProgram();
+                gl.attachShader(prog, vs);
+                gl.attachShader(prog, fs);
+                gl.linkProgram(prog);
+                if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+                    throw new Error('Link Error: ' + gl.getProgramInfoLog(prog));
+                }
+                return prog;
+            }
+
+            cacheUniforms() {
+                const gl = this.gl;
+                this.uniforms = {
+                    prevFrame: gl.getUniformLocation(this.program, 'u_prev_frame'),
+                    currentDraw: gl.getUniformLocation(this.program, 'u_current_draw'),
+                    resolution: gl.getUniformLocation(this.program, 'u_resolution'),
+                    time: gl.getUniformLocation(this.program, 'u_time'),
+                    decay: gl.getUniformLocation(this.program, 'u_decay'),
+                    zoom: gl.getUniformLocation(this.program, 'u_zoom'),
+                    rot: gl.getUniformLocation(this.program, 'u_rot'),
+                    swirl: gl.getUniformLocation(this.program, 'u_swirl'),
+                    bass: gl.getUniformLocation(this.program, 'u_bass'),
+                    treble: gl.getUniformLocation(this.program, 'u_treble'),
+                    colorSpeed: gl.getUniformLocation(this.program, 'u_color_speed'),
+                    warpType: gl.getUniformLocation(this.program, 'u_warp_type'),
+                    palette: gl.getUniformLocation(this.program, 'u_palette'),
+                    shockwaveCenter: gl.getUniformLocation(this.program, 'u_shockwave_center'),
+                    shockwaveRadius: gl.getUniformLocation(this.program, 'u_shockwave_radius'),
+                    mouseOffset: gl.getUniformLocation(this.program, 'u_mouse_offset')
+                };
+
+                this.postUniforms = {
+                    scene: gl.getUniformLocation(this.postProgram, 'u_scene'),
+                    resolution: gl.getUniformLocation(this.postProgram, 'u_resolution'),
+                    time: gl.getUniformLocation(this.postProgram, 'u_time'),
+                    crtCurve: gl.getUniformLocation(this.postProgram, 'u_crt_curve'),
+                    scanlines: gl.getUniformLocation(this.postProgram, 'u_scanlines'),
+                    chroma: gl.getUniformLocation(this.postProgram, 'u_chroma'),
+                    bloom: gl.getUniformLocation(this.postProgram, 'u_bloom'),
+                    bass: gl.getUniformLocation(this.postProgram, 'u_bass'),
+                    beatFlash: gl.getUniformLocation(this.postProgram, 'u_beat_flash'),
+                    fxEnabled: gl.getUniformLocation(this.postProgram, 'u_fx_enabled')
+                };
+            }
+
+            initFramebuffers() {
+                const gl = this.gl;
+                const w = this.canvas.width;
+                const h = this.canvas.height;
+
+                this.textures = [this.createTexture(w, h), this.createTexture(w, h)];
+                this.fbos = [this.createFramebuffer(this.textures[0]), this.createFramebuffer(this.textures[1])];
+                this.currentFBO = 0;
+
+                this.drawTexture = this.createTexture(w, h);
+                this.postTexture = this.createTexture(w, h);
+                this.postFBO = this.createFramebuffer(this.postTexture);
+            }
+
+            createTexture(w, h) {
+                const gl = this.gl;
+                const tex = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, tex);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                return tex;
+            }
+
+            createFramebuffer(texture) {
+                const gl = this.gl;
+                const fbo = gl.createFramebuffer();
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                return fbo;
+            }
+
+            resize(w, h) {
+                this.canvas.width = w;
+                this.canvas.height = h;
+                this.gl.viewport(0, 0, w, h);
+                this.initFramebuffers();
+            }
+
+            triggerBeatFlash() {
+                this.beatFlash = 1.0;
+            }
+
+            compileCustomWarpShader(userGlslCode) {
+                const gl = this.gl;
+                let fsSrc = FRAGMENT_SHADER_SRC;
+                if (userGlslCode && userGlslCode.trim().length > 0) {
+                    fsSrc = '#define USE_CUSTOM_WARP\n' + fsSrc.replace('/* USER_CUSTOM_GLSL_WARP */', userGlslCode);
+                }
+
+                try {
+                    const newProg = this.createProgram(VERTEX_SHADER_SRC, fsSrc);
+                    this.program = newProg;
+                    this.cacheUniforms();
+                    return { success: true };
+                } catch(err) {
+                    return { success: false, error: err.message };
+                }
+            }
+
+            resetDefaultWarp() {
+                return this.compileCustomWarpShader(null);
+            }
+
+            render(canvas2d, params, audioAnalysis, mouseOffset, shockwave) {
+                const gl = this.gl;
+                const w = this.canvas.width;
+                const h = this.canvas.height;
+
+                // Update 2D Canvas texture
+                gl.bindTexture(gl.TEXTURE_2D, this.drawTexture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas2d);
+
+                // Pass 1: Milkdrop Warp & Feedback into FBO
+                const readFBO = this.fbos[this.currentFBO];
+                const writeIdx = 1 - this.currentFBO;
+                const targetFBO = params.fxEnabled ? this.postFBO : this.fbos[writeIdx];
+
+                gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
+                gl.viewport(0, 0, w, h);
+
+                gl.useProgram(this.program);
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
+                gl.enableVertexAttribArray(this.posAttrib);
+                gl.vertexAttribPointer(this.posAttrib, 2, gl.FLOAT, false, 0, 0);
+
+                // Textures
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, this.textures[this.currentFBO]);
+                gl.uniform1i(this.uniforms.prevFrame, 0);
+
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, this.drawTexture);
+                gl.uniform1i(this.uniforms.currentDraw, 1);
+
+                // Uniforms
+                gl.uniform2f(this.uniforms.resolution, w, h);
+                gl.uniform1f(this.uniforms.time, performance.now() * 0.001);
+                gl.uniform1f(this.uniforms.decay, params.decay);
+                gl.uniform1f(this.uniforms.zoom, params.zoom);
+                gl.uniform1f(this.uniforms.rot, params.rot);
+                gl.uniform1f(this.uniforms.swirl, params.swirl * params.warp);
+                gl.uniform1f(this.uniforms.bass, audioAnalysis.bass * params.sensitivity);
+                gl.uniform1f(this.uniforms.treble, audioAnalysis.treble * params.sensitivity);
+                gl.uniform1f(this.uniforms.colorSpeed, params.colorSpeed);
+                gl.uniform1i(this.uniforms.warpType, params.warpType);
+                gl.uniform1i(this.uniforms.palette, params.palette);
+                gl.uniform2f(this.uniforms.shockwaveCenter, shockwave.x, shockwave.y);
+                gl.uniform1f(this.uniforms.shockwaveRadius, shockwave.radius);
+                gl.uniform2f(this.uniforms.mouseOffset, mouseOffset.x, mouseOffset.y);
+
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+                // If post-FX is enabled, run Pass 2: CRT, Bloom, and RGB Split to Screen
+                if (params.fxEnabled) {
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                    gl.viewport(0, 0, w, h);
+
+                    gl.useProgram(this.postProgram);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
+                    gl.enableVertexAttribArray(this.postPosAttrib);
+                    gl.vertexAttribPointer(this.postPosAttrib, 2, gl.FLOAT, false, 0, 0);
+
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, this.postTexture);
+                    gl.uniform1i(this.postUniforms.scene, 0);
+
+                    gl.uniform2f(this.postUniforms.resolution, w, h);
+                    gl.uniform1f(this.postUniforms.time, performance.now() * 0.001);
+                    gl.uniform1f(this.postUniforms.crtCurve, params.crtCurve);
+                    gl.uniform1f(this.postUniforms.scanlines, params.scanlines);
+                    gl.uniform1f(this.postUniforms.chroma, params.chroma);
+                    gl.uniform1f(this.postUniforms.bloom, params.bloom);
+                    gl.uniform1f(this.postUniforms.bass, audioAnalysis.bass * params.sensitivity);
+                    gl.uniform1f(this.postUniforms.beatFlash, this.beatFlash);
+                    gl.uniform1i(this.postUniforms.fxEnabled, 1);
+
+                    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+                    // Copy postTexture back to pingpong so feedback loops the composite
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[writeIdx]);
+                    gl.uniform1i(this.postUniforms.fxEnabled, 0);
+                    gl.drawArrays(gl.TRIANGLES, 0, 6);
+                } else {
+                    // Copy to screen directly
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                    gl.viewport(0, 0, w, h);
+                    gl.useProgram(this.postProgram);
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, this.textures[writeIdx]);
+                    gl.uniform1i(this.postUniforms.scene, 0);
+                    gl.uniform1i(this.postUniforms.fxEnabled, 0);
+                    gl.drawArrays(gl.TRIANGLES, 0, 6);
+                }
+
+                // Decay beat flash
+                this.beatFlash *= 0.88;
+                this.currentFBO = writeIdx;
+            }
+        }
+
+        class ShapeRenderer {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.rotAngle = 0;
+                this.tentaclePhase = 0;
+                this.particles = [];
+                this.initParticles(90);
+            }
+
+            resize(w, h) {
+                this.canvas.width = w;
+                this.canvas.height = h;
+            }
+
+            initParticles(count) {
+                this.particles = [];
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 2.5 + 0.5;
+                    this.particles.push({
+                        x: 0,
+                        y: 0,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: Math.random(),
+                        decay: Math.random() * 0.015 + 0.005,
+                        size: Math.random() * 3.5 + 1.2,
+                        hue: Math.random() * 60 + 170
+                    });
+                }
+            }
+
+            getPaletteColor(t, paletteIndex, alpha = 1.0) {
+                const p = paletteIndex % 12;
+                let r = 0.5 + 0.5 * Math.cos(6.28318 * (t + 0.0));
+                let g = 0.5 + 0.5 * Math.cos(6.28318 * (t + 0.33));
+                let b = 0.5 + 0.5 * Math.cos(6.28318 * (t + 0.67));
+
+                if (p === 1) { // Acid
+                    r = 0.5 + 0.5 * Math.cos(6.28318 * (2.0 * t + 0.5));
+                    g = 0.5 + 0.5 * Math.cos(6.28318 * (1.0 * t + 0.2));
+                    b = 0.1;
+                } else if (p === 4) { // Cyber
+                    r = 0.4 + 0.4 * Math.cos(6.28318 * t);
+                    g = 0.2 + 0.3 * Math.sin(6.28318 * t);
+                    b = 0.9;
+                } else if (p === 5) { // Fire
+                    r = 0.9 + 0.1 * Math.sin(t * 6.28);
+                    g = 0.3 + 0.4 * Math.cos(t * 6.28);
+                    b = 0.05;
+                } else if (p === 6) { // Aurora
+                    r = 0.1 + 0.2 * Math.cos(t * 6.28);
+                    g = 0.7 + 0.3 * Math.sin(t * 6.28);
+                    b = 0.6 + 0.4 * Math.cos(t * 6.28);
+                }
+                const ri = Math.floor(Math.max(0, Math.min(255, r * 255)));
+                const gi = Math.floor(Math.max(0, Math.min(255, g * 255)));
+                const bi = Math.floor(Math.max(0, Math.min(255, b * 255)));
+                return `rgba(${ri},${gi},${bi},${alpha})`;
+            }
+
+            renderParticles(cx, cy, bass, isBeat, palette) {
+                const ctx = this.ctx;
+                for (let p of this.particles) {
+                    p.x += p.vx * (1.0 + bass * 2.5);
+                    p.y += p.vy * (1.0 + bass * 2.5);
+                    p.life -= p.decay;
+
+                    if (p.life <= 0 || isBeat) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const speed = (Math.random() * 3 + 1) * (1.0 + bass * 3.0);
+                        p.x = 0;
+                        p.y = 0;
+                        p.vx = Math.cos(angle) * speed;
+                        p.vy = Math.sin(angle) * speed;
+                        p.life = 1.0;
+                        p.decay = Math.random() * 0.02 + 0.008;
+                    }
+
+                    ctx.beginPath();
+                    ctx.arc(cx + p.x, cy + p.y, p.size * (1.0 + bass * 1.5), 0, Math.PI * 2);
+                    ctx.fillStyle = this.getPaletteColor(p.life + p.hue / 360, palette, p.life * 0.9);
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = ctx.fillStyle;
+                    ctx.fill();
+                }
+                ctx.shadowBlur = 0;
+            }
+
+            renderTentacles(cx, cy, count, bass, treb, palette) {
+                const ctx = this.ctx;
+                this.tentaclePhase += 0.02 + bass * 0.04;
+                const arms = count || 8;
+
+                for (let i = 0; i < arms; i++) {
+                    const baseAngle = (i / arms) * Math.PI * 2 + this.rotAngle * 0.5;
+                    ctx.beginPath();
+                    let px = cx;
+                    let py = cy;
+                    ctx.moveTo(px, py);
+
+                    const segments = 18;
+                    const armLength = (Math.min(this.canvas.width, this.canvas.height) * 0.38) * (1.0 + bass * 0.4);
+
+                    for (let s = 1; s <= segments; s++) {
+                        const progress = s / segments;
+                        const sway = Math.sin(this.tentaclePhase * 3.0 + s * 0.5 + i) * (24 + treb * 40) * progress;
+                        const dist = progress * armLength;
+                        const curAngle = baseAngle + (sway / dist);
+
+                        const nx = cx + Math.cos(curAngle) * dist;
+                        const ny = cy + Math.sin(curAngle) * dist;
+                        ctx.quadraticCurveTo(px, py, (px + nx) * 0.5, (py + ny) * 0.5);
+                        px = nx;
+                        py = ny;
+                    }
+
+                    ctx.strokeStyle = this.getPaletteColor((i / arms) + this.tentaclePhase * 0.1, palette, 0.7);
+                    ctx.lineWidth = Math.max(1.5, (arms <= 8 ? 4 : 2) * (1.0 + bass));
+                    ctx.shadowBlur = 12;
+                    ctx.shadowColor = ctx.strokeStyle;
+                    ctx.stroke();
+                }
+                ctx.shadowBlur = 0;
+            }
+
+            render3DTesseract(cx, cy, bass, treble, palette) {
+                const ctx = this.ctx;
+                const size = Math.min(this.canvas.width, this.canvas.height) * 0.18 * (1.0 + bass * 0.4);
+                const rot = this.rotAngle;
+
+                // 8 vertices of cube
+                const vertices = [];
+                for (let x = -1; x <= 1; x += 2) {
+                    for (let y = -1; y <= 1; y += 2) {
+                        for (let z = -1; z <= 1; z += 2) {
+                            vertices.push([x, y, z]);
+                        }
+                    }
+                }
+
+                // Rotate and project
+                const projected = vertices.map(v => {
+                    let [x, y, z] = v;
+                    // Rotate Y
+                    let cosY = Math.cos(rot);
+                    let sinY = Math.sin(rot);
+                    let x1 = x * cosY + z * sinY;
+                    let z1 = -x * sinY + z * cosY;
+
+                    // Rotate X
+                    let cosX = Math.cos(rot * 0.8);
+                    let sinX = Math.sin(rot * 0.8);
+                    let y2 = y * cosX - z1 * sinX;
+                    let z2 = y * sinX + z1 * cosX;
+
+                    const fov = 3.2;
+                    const scale = fov / (fov + z2);
+                    return [cx + x1 * size * scale, cy + y2 * size * scale];
+                });
+
+                // Draw 12 Edges
+                ctx.strokeStyle = this.getPaletteColor(this.rotAngle * 0.1, palette, 0.9);
+                ctx.lineWidth = 2.5 + bass * 3.0;
+                ctx.shadowBlur = 14;
+                ctx.shadowColor = ctx.strokeStyle;
+
+                const edges = [
+                    [0,1],[1,3],[3,2],[2,0], // back face
+                    [4,5],[5,7],[7,6],[6,4], // front face
+                    [0,4],[1,5],[2,6],[3,7]  // connecting edges
+                ];
+
+                edges.forEach(([i1, i2]) => {
+                    ctx.beginPath();
+                    ctx.moveTo(projected[i1][0], projected[i1][1]);
+                    ctx.lineTo(projected[i2][0], projected[i2][1]);
+                    ctx.stroke();
+                });
+
+                // Inner cube with counter-rotation
+                const innerSize = size * 0.5;
+                ctx.strokeStyle = this.getPaletteColor(this.rotAngle * 0.1 + 0.5, palette, 0.8);
+                edges.forEach(([i1, i2]) => {
+                    ctx.beginPath();
+                    const p1x = cx + (projected[i1][0] - cx) * 0.5;
+                    const p1y = cy + (projected[i1][1] - cy) * 0.5;
+                    const p2x = cx + (projected[i2][0] - cx) * 0.5;
+                    const p2y = cy + (projected[i2][1] - cy) * 0.5;
+                    ctx.moveTo(p1x, p1y);
+                    ctx.lineTo(p2x, p2y);
+                    ctx.stroke();
+
+                    // Connect outer to inner (Hypercube tesseract diagonals)
+                    ctx.beginPath();
+                    ctx.moveTo(projected[i1][0], projected[i1][1]);
+                    ctx.lineTo(p1x, p1y);
+                    ctx.stroke();
+                });
+                ctx.shadowBlur = 0;
+            }
+
+            renderTorus(cx, cy, bass, palette) {
+                const ctx = this.ctx;
+                const R = Math.min(this.canvas.width, this.canvas.height) * 0.22 * (1.0 + bass * 0.3);
+                const r = R * 0.42;
+                const rings = 14;
+                const segs = 20;
+
+                ctx.strokeStyle = this.getPaletteColor(this.rotAngle * 0.1, palette, 0.75);
+                ctx.lineWidth = 1.6;
+
+                for (let i = 0; i < rings; i++) {
+                    const u = (i / rings) * Math.PI * 2;
+                    ctx.beginPath();
+                    for (let j = 0; j <= segs; j++) {
+                        const v = (j / segs) * Math.PI * 2;
+                        const x = (R + r * Math.cos(v)) * Math.cos(u + this.rotAngle);
+                        const y = (R + r * Math.cos(v)) * Math.sin(u + this.rotAngle);
+                        const z = r * Math.sin(v);
+
+                        const cosA = Math.cos(this.rotAngle * 0.7);
+                        const sinA = Math.sin(this.rotAngle * 0.7);
+                        const yRot = y * cosA - z * sinA;
+
+                        const px = cx + x;
+                        const py = cy + yRot;
+                        if (j === 0) ctx.moveTo(px, py);
+                        else ctx.lineTo(px, py);
+                    }
+                    ctx.stroke();
+                }
+            }
+
+            renderCyberGrid(w, h, bass, palette) {
+                const ctx = this.ctx;
+                const horizon = h * 0.58;
+                const fov = 160;
+
+                // Wireframe retro sun
+                const sunR = Math.min(w, h) * 0.14 * (1.0 + bass * 0.2);
+                const grad = ctx.createLinearGradient(0, horizon - sunR * 2, 0, horizon);
+                grad.addColorStop(0, '#f43f5e');
+                grad.addColorStop(0.7, '#f59e0b');
+                grad.addColorStop(1, 'transparent');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(w * 0.5, horizon - sunR * 0.3, sunR, Math.PI, 0);
+                ctx.fill();
+
+                // Grid perspective lines
+                ctx.strokeStyle = this.getPaletteColor(0.8, palette, 0.65);
+                ctx.lineWidth = 1.5;
+                for (let x = -w; x <= w * 2; x += w * 0.1) {
+                    ctx.beginPath();
+                    ctx.moveTo(w * 0.5, horizon);
+                    ctx.lineTo(x, h);
+                    ctx.stroke();
+                }
+
+                // Horizontal moving lines
+                const speed = (performance.now() * 0.001 * 60) % 30;
+                for (let y = horizon; y < h; y += 14) {
+                    const depth = (y - horizon) / (h - horizon);
+                    const drawY = horizon + Math.pow(depth, 2.2) * (h - horizon);
+                    ctx.beginPath();
+                    ctx.moveTo(0, drawY);
+                    ctx.lineTo(w, drawY);
+                    ctx.strokeStyle = this.getPaletteColor(depth, palette, depth * 0.8);
+                    ctx.stroke();
+                }
+            }
+
+            renderDNAHelix(cx, cy, bass, palette) {
+                const ctx = this.ctx;
+                const nodes = 24;
+                const radius = Math.min(this.canvas.width, this.canvas.height) * 0.18;
+                const height = this.canvas.height * 0.75;
+                const startY = cy - height * 0.5;
+
+                for (let i = 0; i < nodes; i++) {
+                    const progress = i / nodes;
+                    const y = startY + progress * height;
+                    const angle = progress * Math.PI * 4 + this.rotAngle * 2.0;
+
+                    const x1 = cx + Math.cos(angle) * radius * (1.0 + bass * 0.3);
+                    const z1 = Math.sin(angle);
+                    const x2 = cx + Math.cos(angle + Math.PI) * radius * (1.0 + bass * 0.3);
+                    const z2 = Math.sin(angle + Math.PI);
+
+                    // Connecting base pair rung
+                    ctx.strokeStyle = this.getPaletteColor(progress, palette, 0.45);
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y);
+                    ctx.lineTo(x2, y);
+                    ctx.stroke();
+
+                    // Node 1
+                    const r1 = 4 + (z1 + 1) * 3;
+                    ctx.fillStyle = this.getPaletteColor(progress, palette, 0.9);
+                    ctx.beginPath();
+                    ctx.arc(x1, y, r1, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Node 2
+                    const r2 = 4 + (z2 + 1) * 3;
+                    ctx.fillStyle = this.getPaletteColor(progress + 0.5, palette, 0.9);
+                    ctx.beginPath();
+                    ctx.arc(x2, y, r2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            renderCymatics(cx, cy, bass, treb, palette) {
+                const ctx = this.ctx;
+                const points = 160;
+                const maxR = Math.min(this.canvas.width, this.canvas.height) * 0.32;
+                const n = 3 + Math.floor(treb * 4);
+                const m = 5 + Math.floor(bass * 4);
+
+                ctx.strokeStyle = this.getPaletteColor(this.rotAngle * 0.2, palette, 0.85);
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                for (let i = 0; i <= points; i++) {
+                    const theta = (i / points) * Math.PI * 2;
+                    const r = maxR * Math.abs(Math.sin(n * theta) * Math.cos(m * theta) + Math.cos(theta * 2.0) * 0.3) * (1.0 + bass * 0.5);
+                    const x = cx + Math.cos(theta + this.rotAngle) * r;
+                    const y = cy + Math.sin(theta + this.rotAngle) * r;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            renderWaveform(timeData, cx, cy, style, bass, palette) {
+                const ctx = this.ctx;
+                const len = timeData ? timeData.length : 256;
+                const maxR = Math.min(this.canvas.width, this.canvas.height) * 0.28;
+
+                ctx.lineWidth = 2.2 + bass * 2.0;
+                ctx.strokeStyle = this.getPaletteColor(this.rotAngle * 0.1 + 0.3, palette, 0.85);
+
+                if (style === 'rings') {
+                    ctx.beginPath();
+                    for (let i = 0; i < len; i++) {
+                        const angle = (i / len) * Math.PI * 2;
+                        const v = (timeData[i] - 128) / 128;
+                        const r = maxR * 0.6 + v * (maxR * 0.4);
+                        const x = cx + Math.cos(angle) * r;
+                        const y = cy + Math.sin(angle) * r;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.closePath();
+                    ctx.stroke();
+                } else if (style === 'lissajous') {
+                    ctx.beginPath();
+                    const aX = 3, aY = 2;
+                    for (let i = 0; i < len; i++) {
+                        const t = (i / len) * Math.PI * 2;
+                        const v = (timeData[i] - 128) / 128;
+                        const x = cx + Math.sin(aX * t + this.rotAngle) * (maxR + v * 50);
+                        const y = cy + Math.sin(aY * t) * (maxR + v * 50);
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.closePath();
+                    ctx.stroke();
+                } else if (style === 'star') {
+                    ctx.beginPath();
+                    for (let i = 0; i < len; i++) {
+                        const angle = (i / len) * Math.PI * 2;
+                        const v = (timeData[i] - 128) / 128;
+                        const starMod = (i % 6 === 0) ? 1.4 : 0.8;
+                        const r = (maxR * 0.5 * starMod) + v * 60;
+                        const x = cx + Math.cos(angle + this.rotAngle) * r;
+                        const y = cy + Math.sin(angle + this.rotAngle) * r;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.closePath();
+                    ctx.stroke();
+                } else { // Standard Line
+                    ctx.beginPath();
+                    const w = this.canvas.width;
+                    const sliceW = w / len;
+                    let x = 0;
+                    for (let i = 0; i < len; i++) {
+                        const v = (timeData[i] - 128) / 128;
+                        const y = cy + v * (cy * 0.5);
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                        x += sliceW;
+                    }
+                    ctx.stroke();
+                }
+            }
+
+            render(preset, audio, params) {
+                const w = this.canvas.width;
+                const h = this.canvas.height;
+                const ctx = this.ctx;
+
+                ctx.clearRect(0, 0, w, h);
+
+                const cx = w * 0.5;
+                const cy = h * 0.5;
+                const bass = (audio ? audio.bass : 0) * params.sensitivity;
+                const treb = (audio ? audio.treble : 0) * params.sensitivity;
+                const isBeat = audio ? audio.isBeat : false;
+                const timeData = (audio && audio.timeData) ? audio.timeData : new Uint8Array(256);
+
+                this.rotAngle += 0.008 + bass * 0.015;
+
+                // 1. Supernova particles
+                if (params.showParticles) {
+                    this.renderParticles(cx, cy, bass, isBeat, preset.palette);
+                }
+
+                // 2. Specific shape style
+                switch (preset.shapeStyle) {
+                    case 'tesseract':
+                        this.render3DTesseract(cx, cy, bass, treb, preset.palette);
+                        break;
+                    case 'torus3d':
+                        this.renderTorus(cx, cy, bass, preset.palette);
+                        break;
+                    case 'cybergrid':
+                        this.renderCyberGrid(w, h, bass, preset.palette);
+                        break;
+                    case 'dnahelix':
+                        this.renderDNAHelix(cx, cy, bass, preset.palette);
+                        break;
+                    case 'cymatics':
+                        this.renderCymatics(cx, cy, bass, treb, preset.palette);
+                        break;
+                    default:
+                        break;
+                }
+
+                // 3. Bio-tentacles
+                if (params.showTentacles && preset.tentacles) {
+                    this.renderTentacles(cx, cy, preset.tentacleCount || 8, bass, treb, preset.palette);
+                }
+
+                // 4. Waveform overlay
+                if (preset.waveformStyle) {
+                    this.renderWaveform(timeData, cx, cy, preset.waveformStyle, bass, preset.palette);
+                }
+            }
+        }
+
+        class VJControllerManager {
+            constructor(onActionCallback) {
+                this.onAction = onActionCallback;
+                this.midiAccess = null;
+                this.activeMidiInput = null;
+                this.gamepadIndex = null;
+                this.prevButtonStates = {};
+                this.hasMidiSupport = 'requestMIDIAccess' in navigator;
+                this.lastNoteTime = 0;
+
+                // Elements
+                this.vjMidiDot = document.getElementById('vj-midi-dot');
+                this.vjMidiDevice = document.getElementById('vj-midi-device');
+                this.vjPadDot = document.getElementById('vj-pad-dot');
+                this.vjPadDevice = document.getElementById('vj-pad-device');
+                this.vjStickLeft = document.getElementById('vj-stick-left');
+                this.vjStickRight = document.getElementById('vj-stick-right');
+                this.vjStickLeftCoords = document.getElementById('vj-stick-left-coords');
+                this.vjStickRightCoords = document.getElementById('vj-stick-right-coords');
+                this.vjMidiLastNote = document.getElementById('vj-midi-last-note');
+                this.osdVj = document.getElementById('osd-vj');
+                this.osdVjLabel = document.getElementById('osd-vj-label');
+
+                this.initGamepadListeners();
+                this.initMidi();
+            }
+
+            initGamepadListeners() {
+                window.addEventListener('gamepadconnected', (e) => {
+                    this.gamepadIndex = e.gamepad.index;
+                    if (this.vjPadDot) this.vjPadDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+                    if (this.vjPadDevice) this.vjPadDevice.textContent = e.gamepad.id.slice(0, 24);
+                    this.updateOsdStatus();
+                    if (this.onAction) this.onAction('toast', { msg: `Gamepad Connected: ${e.gamepad.id.slice(0, 18)}...`, icon: 'fa-gamepad' });
+                });
+
+                window.addEventListener('gamepaddisconnected', (e) => {
+                    if (this.gamepadIndex === e.gamepad.index) {
+                        this.gamepadIndex = null;
+                        if (this.vjPadDot) this.vjPadDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
+                        if (this.vjPadDevice) this.vjPadDevice.textContent = 'Press Any Button';
+                        this.updateOsdStatus();
+                        if (this.onAction) this.onAction('toast', { msg: 'Gamepad Disconnected', icon: 'fa-gamepad' });
+                    }
+                });
+            }
+
+            async initMidi() {
+                if (!this.hasMidiSupport) {
+                    if (this.vjMidiDevice) this.vjMidiDevice.textContent = 'Web MIDI not supported';
+                    return;
+                }
+                try {
+                    const access = await navigator.requestMIDIAccess({ sysex: false });
+                    this.midiAccess = access;
+                    this.setupMidiInputs();
+                    access.onstatechange = () => this.setupMidiInputs();
+                } catch(e) {
+                    if (this.vjMidiDevice) this.vjMidiDevice.textContent = 'MIDI Permission Denied';
+                }
+            }
+
+            setupMidiInputs() {
+                if (!this.midiAccess) return;
+                const inputs = Array.from(this.midiAccess.inputs.values());
+                if (inputs.length > 0) {
+                    const first = inputs[0];
+                    this.activeMidiInput = first;
+                    first.onmidimessage = (msg) => this.handleMidiMessage(msg);
+                    if (this.vjMidiDot) this.vjMidiDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+                    if (this.vjMidiDevice) this.vjMidiDevice.textContent = first.name || 'Generic MIDI Device';
+                    this.updateOsdStatus();
+                    if (this.onAction) this.onAction('toast', { msg: `MIDI Active: ${first.name || 'Controller'}`, icon: 'fa-sliders' });
+                } else {
+                    this.activeMidiInput = null;
+                    if (this.vjMidiDot) this.vjMidiDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
+                    if (this.vjMidiDevice) this.vjMidiDevice.textContent = 'Connect USB MIDI Device';
+                    this.updateOsdStatus();
+                }
+            }
+
+            updateOsdStatus() {
+                if (!this.osdVj) return;
+                const hasPad = this.gamepadIndex !== null;
+                const hasMidi = this.activeMidiInput !== null;
+                if (hasPad || hasMidi) {
+                    this.osdVj.classList.remove('hidden');
+                    this.osdVj.classList.add('flex');
+                    if (hasPad && hasMidi) this.osdVjLabel.textContent = 'PAD+MIDI';
+                    else if (hasPad) this.osdVjLabel.textContent = 'PAD LIVE';
+                    else this.osdVjLabel.textContent = 'MIDI LIVE';
+                } else {
+                    this.osdVj.classList.remove('flex');
+                    this.osdVj.classList.add('hidden');
+                }
+            }
+
+            handleMidiMessage(event) {
+                const [status, data1, data2] = event.data;
+                const msgType = status >> 4;
+
+                // Note-On
+                if (msgType === 9 && data2 > 0) {
+                    const noteNumber = data1;
+                    const velocity = data2 / 127;
+                    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+                    const noteStr = `${noteNames[noteNumber % 12]}${Math.floor(noteNumber / 12) - 1}`;
+                    
+                    if (this.vjMidiLastNote) {
+                        this.vjMidiLastNote.textContent = `${noteStr} (Vel: ${Math.round(velocity * 100)}%)`;
+                        this.vjMidiLastNote.className = 'px-2 py-0.5 rounded bg-fuchsia-500 text-black font-bold animate-pulse';
+                        clearTimeout(this.noteTimer);
+                        this.noteTimer = setTimeout(() => {
+                            if (this.vjMidiLastNote) this.vjMidiLastNote.className = 'px-2 py-0.5 rounded bg-white/10 text-slate-400 font-bold';
+                        }, 250);
+                    }
+
+                    // Trigger visual shockwave & beat flash derived from musical note pitch
+                    const angle = (noteNumber % 12) / 12 * Math.PI * 2;
+                    const dist = 0.25;
+                    const shockX = 0.5 + Math.cos(angle) * dist;
+                    const shockY = 0.5 + Math.sin(angle) * dist;
+                    if (this.onAction) this.onAction('midiNoteTrigger', { x: shockX, y: shockY, velocity });
+                }
+
+                // Control Change (CC)
+                if (msgType === 11) {
+                    const cc = data1;
+                    const valNorm = data2 / 127;
+                    this.updateMidiCc(cc, valNorm);
+                }
+            }
+
+            updateMidiCc(cc, norm) {
+                // CC 1: Mod Wheel -> Warp
+                if (cc === 1) {
+                    const warpVal = 0.1 + norm * 2.4;
+                    if (this.onAction) this.onAction('setParam', { key: 'warp', val: warpVal });
+                    const valEl = document.getElementById('vj-cc-val-1');
+                    const barEl = document.getElementById('vj-cc-bar-1');
+                    if (valEl) valEl.textContent = warpVal.toFixed(2);
+                    if (barEl) barEl.style.width = `${norm * 100}%`;
+                }
+                // CC 7: Volume -> Sensitivity
+                else if (cc === 7) {
+                    const sensVal = 0.5 + norm * 3.5;
+                    if (this.onAction) this.onAction('setParam', { key: 'sensitivity', val: sensVal });
+                    const valEl = document.getElementById('vj-cc-val-7');
+                    const barEl = document.getElementById('vj-cc-bar-7');
+                    if (valEl) valEl.textContent = sensVal.toFixed(2);
+                    if (barEl) barEl.style.width = `${norm * 100}%`;
+                }
+                // CC 10: Pan -> Feedback Decay
+                else if (cc === 10) {
+                    const decayVal = 0.88 + norm * 0.115;
+                    if (this.onAction) this.onAction('setParam', { key: 'decay', val: decayVal });
+                    const valEl = document.getElementById('vj-cc-val-10');
+                    const barEl = document.getElementById('vj-cc-bar-10');
+                    if (valEl) valEl.textContent = decayVal.toFixed(3);
+                    if (barEl) barEl.style.width = `${norm * 100}%`;
+                }
+                // CC 74: Brightness/Cutoff -> Bloom
+                else if (cc === 74) {
+                    const bloomVal = norm * 1.5;
+                    if (this.onAction) this.onAction('setParam', { key: 'bloom', val: bloomVal });
+                    const valEl = document.getElementById('vj-cc-val-74');
+                    const barEl = document.getElementById('vj-cc-bar-74');
+                    if (valEl) valEl.textContent = bloomVal.toFixed(2);
+                    if (barEl) barEl.style.width = `${norm * 100}%`;
+                }
+            }
+
+            pollGamepad(mouseOffset, shockwave) {
+                if (!navigator.getGamepads) return { zoomMod: 0, rotMod: 0 };
+                const gamepads = navigator.getGamepads();
+                const pad = (this.gamepadIndex !== null) ? gamepads[this.gamepadIndex] : gamepads[0];
+                if (!pad || !pad.connected) return { zoomMod: 0, rotMod: 0 };
+
+                // Deadzone threshold
+                const deadzone = 0.12;
+                const applyDeadzone = (v) => Math.abs(v) > deadzone ? v : 0;
+
+                // Left Stick: Camera offset / Vortex bending
+                const lx = applyDeadzone(pad.axes[0] || 0);
+                const ly = applyDeadzone(pad.axes[1] || 0);
+                if (lx !== 0 || ly !== 0) {
+                    mouseOffset.x = lx * 0.45;
+                    mouseOffset.y = -ly * 0.45;
+                }
+
+                // Right Stick: Zoom & Rotation rate modulations
+                const rx = applyDeadzone(pad.axes[2] || 0);
+                const ry = applyDeadzone(pad.axes[3] || 0);
+                const rotMod = rx * 0.015;
+                const zoomMod = -ry * 0.02;
+
+                // Analog Triggers for Warp & Decay
+                const lt = pad.buttons[6] ? pad.buttons[6].value : 0;
+                const rt = pad.buttons[7] ? pad.buttons[7].value : 0;
+                if (rt > 0.05) {
+                    userParams.warp = 1.0 + rt * 1.5;
+                    const valWarp = document.getElementById('val-warp');
+                    const sliderWarp = document.getElementById('slider-warp');
+                    if (valWarp) valWarp.textContent = userParams.warp.toFixed(1);
+                    if (sliderWarp) sliderWarp.value = userParams.warp;
+                }
+
+                // Update UI Stick dots
+                if (this.vjStickLeft) {
+                    this.vjStickLeft.style.transform = `translate(${lx * 28}px, ${ly * 28}px)`;
+                }
+                if (this.vjStickLeftCoords) {
+                    this.vjStickLeftCoords.textContent = `X: ${lx.toFixed(2)} | Y: ${(-ly).toFixed(2)}`;
+                }
+                if (this.vjStickRight) {
+                    this.vjStickRight.style.transform = `translate(${rx * 28}px, ${ry * 28}px)`;
+                }
+                if (this.vjStickRightCoords) {
+                    this.vjStickRightCoords.textContent = `Spin: ${(rx * 10).toFixed(1)} | Zoom: ${(1 - ry * 0.1).toFixed(2)}`;
+                }
+
+                // Button clicks (edge-triggered debouncing)
+                const isDown = (idx) => pad.buttons[idx] && pad.buttons[idx].pressed;
+                
+                // Button 0 (A / Cross): Shockwave & Beat Strobe
+                if (isDown(0) && !this.prevButtonStates[0]) {
+                    shockwave.x = 0.5 + mouseOffset.x;
+                    shockwave.y = 0.5 + mouseOffset.y;
+                    shockwave.radius = 0.01;
+                    if (this.onAction) this.onAction('beatFlash');
+                }
+                // Button 1 (B / Circle): Random Preset
+                if (isDown(1) && !this.prevButtonStates[1]) {
+                    if (this.onAction) this.onAction('randomPreset');
+                }
+                // Button 2 (X / Square): Tap Tempo
+                if (isDown(2) && !this.prevButtonStates[2]) {
+                    if (this.onAction) this.onAction('tapTempo');
+                }
+                // Button 3 (Y / Triangle): Next Groove
+                if (isDown(3) && !this.prevButtonStates[3]) {
+                    if (this.onAction) this.onAction('cycleGroove');
+                }
+                // Left Bumper (LB / 4): Previous Preset
+                if (isDown(4) && !this.prevButtonStates[4]) {
+                    if (this.onAction) this.onAction('prevPreset');
+                }
+                // Right Bumper (RB / 5): Next Preset
+                if (isDown(5) && !this.prevButtonStates[5]) {
+                    if (this.onAction) this.onAction('nextPreset');
+                }
+
+                // Store state for edge detection
+                for (let i = 0; i < pad.buttons.length; i++) {
+                    this.prevButtonStates[i] = pad.buttons[i].pressed;
+                }
+
+                return { zoomMod, rotMod };
+            }
+        }
+
+        window.onload = () => {
+            const glCanvas = document.getElementById('gl-canvas');
+            const canvas2d = document.getElementById('canvas2d');
+
+            const audio = new AudioEngine();
+            let visualizer, shapeRenderer;
+
+            try {
+                visualizer = new WebGLVisualizer(glCanvas);
+                shapeRenderer = new ShapeRenderer(canvas2d);
+            } catch(e) {
+                console.error('Initialization error:', e);
+                return;
+            }
+
+            // Window Resizing
+            function handleResize() {
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+                visualizer.resize(w, h);
+                shapeRenderer.resize(w, h);
+            }
+            window.addEventListener('resize', handleResize);
+            handleResize();
+
+            // Shockwave & Mouse Drag Interaction
+            const shockwave = { x: 0.5, y: 0.5, radius: -1.0 };
+            const mouseOffset = { x: 0.0, y: 0.0 };
+            let isDragging = false;
+
+            window.addEventListener('pointerdown', (e) => {
+                audio.resume();
+                if (e.target === glCanvas || e.target === canvas2d) {
+                    isDragging = true;
+                    shockwave.x = e.clientX / window.innerWidth;
+                    shockwave.y = 1.0 - (e.clientY / window.innerHeight);
+                    shockwave.radius = 0.01;
+                    visualizer.triggerBeatFlash();
+                }
+            });
+
+            window.addEventListener('pointermove', (e) => {
+                if (isDragging) {
+                    mouseOffset.x = (e.clientX / window.innerWidth - 0.5) * 0.3;
+                    mouseOffset.y = -(e.clientY / window.innerHeight - 0.5) * 0.3;
+                }
+            });
+
+            window.addEventListener('pointerup', () => {
+                isDragging = false;
+                mouseOffset.x = 0;
+                mouseOffset.y = 0;
+            });
+
+            // Toast Helper
+            const toastEl = document.getElementById('toast');
+            const toastMsg = document.getElementById('toast-msg');
+            const toastIcon = document.getElementById('toast-icon');
+            let toastTimer = null;
+
+            function showToast(msg, icon = 'fa-circle-info') {
+                if (!toastEl) return;
+                toastMsg.textContent = msg;
+                toastIcon.className = `fa-solid ${icon}`;
+                toastEl.classList.remove('opacity-0', '-translate-y-2');
+                toastEl.classList.add('opacity-100', 'translate-y-0');
+                if (toastTimer) clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => {
+                    toastEl.classList.remove('opacity-100', 'translate-y-0');
+                    toastEl.classList.add('opacity-0', '-translate-y-2');
+                }, 2200);
+            }
+
+            // OSD References
+            const osdPreset = document.getElementById('osd-preset');
+            const osdFps = document.getElementById('osd-fps');
+            const osdBpm = document.getElementById('osd-bpm');
+            const osdAudioMode = document.getElementById('osd-audio-mode');
+            const osdBeat = document.getElementById('osd-beat');
+
+            // Render Preset Buttons in Carousel
+            const presetStrip = document.getElementById('preset-strip');
+            function renderPresetPills() {
+                if (!presetStrip) return;
+                presetStrip.innerHTML = '';
+                PRESETS.forEach((p, idx) => {
+                    const btn = document.createElement('button');
+                    const isActive = idx === currentPresetIndex;
+                    btn.className = `px-3 py-1 text-xs rounded-lg font-mono whitespace-nowrap transition ${
+                        isActive
+                            ? 'bg-cyan-500 text-black font-semibold shadow-lg shadow-cyan-500/30'
+                            : 'bg-white/5 hover:bg-white/10 text-slate-300'
+                    }`;
+                    btn.textContent = p.name;
+                    btn.onclick = () => selectPreset(idx);
+                    presetStrip.appendChild(btn);
+                });
+            }
+
+            function selectPreset(idx) {
+                currentPresetIndex = (idx + PRESETS.length) % PRESETS.length;
+                const p = PRESETS[currentPresetIndex];
+                if (osdPreset) osdPreset.textContent = `PRESET: ${p.name.toUpperCase()}`;
+                renderPresetPills();
+                updateJsonEditorFromActivePreset();
+                visualizer.triggerBeatFlash();
+            }
+
+            function nextPreset() { selectPreset(currentPresetIndex + 1); }
+            function prevPreset() { selectPreset(currentPresetIndex - 1); }
+            function randomPreset() {
+                const next = Math.floor(Math.random() * PRESETS.length);
+                selectPreset(next);
+            }
+
+            document.getElementById('btn-next-preset').onclick = nextPreset;
+            document.getElementById('btn-prev-preset').onclick = prevPreset;
+            document.getElementById('btn-random-preset').onclick = randomPreset;
+            renderPresetPills();
+
+            // Auto-cycle presets timer
+            let autoCycleTimer = null;
+            function setupAutoSwitch() {
+                if (userParams.autoCycle) {
+                    if (!autoCycleTimer) {
+                        autoCycleTimer = setInterval(() => nextPreset(), 15000);
+                    }
+                } else {
+                    if (autoCycleTimer) {
+                        clearInterval(autoCycleTimer);
+                        autoCycleTimer = null;
+                    }
+                }
+            }
+
+            // Top Toolbar Bindings
+            const btnToggleSynth = document.getElementById('btn-toggle-synth');
+            const iconSynthPlay = document.getElementById('icon-synth-play');
+            const labelSynthStatus = document.getElementById('label-synth-status');
+
+            btnToggleSynth.onclick = () => {
+                if (audio.isPlayingSynth) {
+                    audio.stopSynth();
+                    iconSynthPlay.className = 'fa-solid fa-play';
+                    labelSynthStatus.textContent = 'Synth Play';
+                    showToast('Synthesizer Paused', 'fa-pause');
+                } else {
+                    audio.startSynth();
+                    iconSynthPlay.className = 'fa-solid fa-pause';
+                    labelSynthStatus.textContent = 'Synth Pause';
+                    osdAudioMode.textContent = `AUDIO: ${audio.grooveNames[audio.grooveIndex].toUpperCase()}`;
+                    showToast('Synthesizer Playing', 'fa-play');
+                }
+            };
+
+            const btnGroove = document.getElementById('btn-groove');
+            const labelGroove = document.getElementById('label-groove');
+            btnGroove.onclick = () => {
+                const gName = audio.cycleGroove();
+                labelGroove.textContent = gName;
+                osdBpm.textContent = `BPM: ${audio.bpm}`;
+                osdAudioMode.textContent = `AUDIO: ${gName.toUpperCase()}`;
+                showToast(`Groove: ${gName} (${audio.bpm} BPM)`, 'fa-music');
+            };
+
+            const btnMic = document.getElementById('btn-mic');
+            btnMic.onclick = async () => {
+                const ok = await audio.useMic();
+                if (ok) {
+                    iconSynthPlay.className = 'fa-solid fa-play';
+                    labelSynthStatus.textContent = 'Synth Play';
+                    osdAudioMode.textContent = 'AUDIO: LIVE MIC';
+                    showToast('Listening to Microphone Input', 'fa-microphone');
+                } else {
+                    showToast('Microphone access denied', 'fa-triangle-exclamation');
+                }
+            };
+
+            const btnTabAudio = document.getElementById('btn-tab-audio');
+            btnTabAudio.onclick = async () => {
+                const ok = await audio.useTabAudio();
+                if (ok) {
+                    iconSynthPlay.className = 'fa-solid fa-play';
+                    labelSynthStatus.textContent = 'Synth Play';
+                    osdAudioMode.textContent = 'AUDIO: TAB/SYSTEM';
+                    showToast('Capturing Tab / System Audio', 'fa-window-restore');
+                } else {
+                    showToast('Tab audio capture cancelled or unavailable', 'fa-triangle-exclamation');
+                }
+            };
+
+            const fileInput = document.getElementById('audio-file-input');
+            fileInput.onchange = (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    audio.useFile(e.target.files[0]);
+                    iconSynthPlay.className = 'fa-solid fa-play';
+                    labelSynthStatus.textContent = 'Synth Play';
+                    osdAudioMode.textContent = 'AUDIO: FILE';
+                    showToast(`Playing file: ${e.target.files[0].name.slice(0, 20)}...`, 'fa-file-audio');
+                }
+            };
+
+            const btnTapTempo = document.getElementById('btn-tap-tempo');
+            btnTapTempo.onclick = () => {
+                const bpm = audio.tapTempo();
+                osdBpm.textContent = `BPM: ${bpm}`;
+                showToast(`BPM Locked: ${bpm}`, 'fa-drum');
+            };
+
+            // High-Resolution Snapshot Capture
+            const shutterFlash = document.getElementById('shutter-flash');
+            function takeSnapshot() {
+                shutterFlash.classList.add('animate-shutter');
+                setTimeout(() => shutterFlash.classList.remove('animate-shutter'), 400);
+
+                const offscreen = document.createElement('canvas');
+                offscreen.width = glCanvas.width;
+                offscreen.height = glCanvas.height;
+                const octx = offscreen.getContext('2d');
+                octx.drawImage(glCanvas, 0, 0);
+
+                const dataUrl = offscreen.toDataURL('image/png');
+                const link = document.createElement('a');
+                link.download = `projectm_snap_${Date.now()}.png`;
+                link.href = dataUrl;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showToast('HD Snapshot Saved to Downloads', 'fa-camera');
+            }
+            document.getElementById('btn-snapshot').onclick = takeSnapshot;
+
+            // 60 FPS Canvas Video Recorder
+            let mediaRecorder = null;
+            let recordedChunks = [];
+            const btnRecord = document.getElementById('btn-record');
+            const recDot = document.getElementById('rec-dot');
+            const labelRecord = document.getElementById('label-record');
+            let recTimer = null;
+            let recSeconds = 0;
+
+            function toggleRecording() {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                    clearInterval(recTimer);
+                    recDot.classList.remove('animate-ping');
+                    labelRecord.textContent = 'REC';
+                    showToast('Finalizing video download...', 'fa-film');
+                } else {
+                    const canvasStream = glCanvas.captureStream(60);
+                    const combinedStream = new MediaStream();
+                    canvasStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+                    if (audio.destNode && audio.destNode.stream) {
+                        audio.destNode.stream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+                    }
+
+                    try {
+                        recordedChunks = [];
+                        mediaRecorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp9,opus' });
+                    } catch(err) {
+                        try {
+                            mediaRecorder = new MediaRecorder(combinedStream);
+                        } catch(err2) {
+                            showToast('Video recording not supported in this browser', 'fa-triangle-exclamation');
+                            return;
+                        }
+                    }
+
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.download = `projectm_recording_${Date.now()}.webm`;
+                        a.href = url;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        showToast('60 FPS Video Downloaded', 'fa-circle-check');
+                    };
+
+                    mediaRecorder.start();
+                    recSeconds = 0;
+                    recDot.classList.add('animate-ping');
+                    recTimer = setInterval(() => {
+                        recSeconds++;
+                        labelRecord.textContent = `${recSeconds}s`;
+                    }, 1000);
+                    showToast('Recording 60 FPS Video & Audio...', 'fa-record-vinyl');
+                }
+            }
+            btnRecord.onclick = toggleRecording;
+
+            // Post-FX Panel Toggle
+            const fxRackPanel = document.getElementById('fx-rack-panel');
+            const btnToggleFx = document.getElementById('btn-toggle-fx');
+            btnToggleFx.onclick = () => {
+                fxRackPanel.classList.toggle('hidden');
+                showToast(fxRackPanel.classList.contains('hidden') ? 'CRT Rack Hidden' : 'CRT Rack Open', 'fa-tv');
+            };
+
+            // Fullscreen Toggle
+            const btnFullscreen = document.getElementById('btn-fullscreen');
+            btnFullscreen.onclick = () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                } else {
+                    document.exitFullscreen().catch(() => {});
+                }
+            };
+
+            // Slider Controls
+            const sliderSens = document.getElementById('slider-sens');
+            const valSens = document.getElementById('val-sens');
+            sliderSens.oninput = (e) => {
+                userParams.sensitivity = parseFloat(e.target.value);
+                valSens.textContent = userParams.sensitivity.toFixed(1);
+            };
+
+            const sliderDecay = document.getElementById('slider-decay');
+            const valDecay = document.getElementById('val-decay');
+            sliderDecay.oninput = (e) => {
+                userParams.decay = parseFloat(e.target.value);
+                valDecay.textContent = userParams.decay.toFixed(3);
+            };
+
+            const sliderWarp = document.getElementById('slider-warp');
+            const valWarp = document.getElementById('val-warp');
+            sliderWarp.oninput = (e) => {
+                userParams.warp = parseFloat(e.target.value);
+                valWarp.textContent = userParams.warp.toFixed(1);
+            };
+
+            const sliderSpeed = document.getElementById('slider-speed');
+            const valSpeed = document.getElementById('val-speed');
+            sliderSpeed.oninput = (e) => {
+                userParams.colorSpeed = parseFloat(e.target.value);
+                valSpeed.textContent = userParams.colorSpeed.toFixed(1);
+            };
+
+            // Post FX Sliders
+            document.getElementById('slider-crt-curve').oninput = (e) => {
+                userParams.crtCurve = parseFloat(e.target.value);
+                document.getElementById('val-crt-curve').textContent = userParams.crtCurve.toFixed(2);
+            };
+            document.getElementById('slider-scanlines').oninput = (e) => {
+                userParams.scanlines = parseFloat(e.target.value);
+                document.getElementById('val-scanlines').textContent = userParams.scanlines.toFixed(2);
+            };
+            document.getElementById('slider-chroma').oninput = (e) => {
+                userParams.chroma = parseFloat(e.target.value);
+                document.getElementById('val-chroma').textContent = userParams.chroma.toFixed(3);
+            };
+            document.getElementById('slider-bloom').oninput = (e) => {
+                userParams.bloom = parseFloat(e.target.value);
+                document.getElementById('val-bloom').textContent = userParams.bloom.toFixed(2);
+            };
+
+            // Checkboxes
+            const checkPostFx = document.getElementById('check-postfx');
+            checkPostFx.onchange = (e) => {
+                userParams.fxEnabled = e.target.checked;
+                showToast(userParams.fxEnabled ? 'CRT Post-FX ON' : 'CRT Post-FX OFF', 'fa-tv');
+            };
+
+            document.getElementById('check-particles').onchange = (e) => {
+                userParams.showParticles = e.target.checked;
+            };
+
+            document.getElementById('check-tentacles').onchange = (e) => {
+                userParams.showTentacles = e.target.checked;
+            };
+
+            document.getElementById('check-autocycle').onchange = (e) => {
+                userParams.autoCycle = e.target.checked;
+                setupAutoSwitch();
+                showToast(userParams.autoCycle ? 'Auto-Cycle Active (15s)' : 'Auto-Cycle Disabled', 'fa-clock');
+            };
+
+            const studioDrawer = document.getElementById('studio-drawer');
+            const btnToggleEditor = document.getElementById('btn-toggle-editor');
+            const btnCloseStudio = document.getElementById('btn-close-studio');
+            const tabBtnGlsl = document.getElementById('tab-btn-glsl');
+            const tabBtnJson = document.getElementById('tab-btn-json');
+            const tabContentGlsl = document.getElementById('tab-content-glsl');
+            const tabContentJson = document.getElementById('tab-content-json');
+
+            const glslTemplates = document.getElementById('glsl-templates');
+            const glslCodeEditor = document.getElementById('glsl-code-editor');
+            const btnCompileGlsl = document.getElementById('btn-compile-glsl');
+            const btnResetGlsl = document.getElementById('btn-reset-glsl');
+            const compilerStatus = document.getElementById('compiler-status');
+
+            const jsonCodeEditor = document.getElementById('json-code-editor');
+            const jsonPresetName = document.getElementById('json-preset-name');
+            const btnCopyJson = document.getElementById('btn-copy-json');
+            const btnDownloadJson = document.getElementById('btn-download-json');
+            const btnApplyJson = document.getElementById('btn-apply-json');
+            const jsonFileInput = document.getElementById('json-file-input');
+            const btnSaveAsNewPreset = document.getElementById('btn-save-as-new-preset');
+
+            const GLSL_TEMPLATES = {
+                vortex: `// Starfield Vortex Warp
+float dynamicZoom = u_zoom - (u_bass * 0.04);
+float dynamicRot = u_rot + sin(dist * 8.0 - u_time * 2.0) * (u_swirl * 0.06);
+mat2 rotMatrix = mat2(cos(dynamicRot), -sin(dynamicRot), sin(dynamicRot), cos(dynamicRot));
+warpedUV = center + rotMatrix * (dir * dynamicZoom);`,
+
+                ripple: `// Liquid Plasma Ripple
+float p1 = sin(uv.x * 14.0 + u_time * 2.5);
+float p2 = cos(uv.y * 14.0 - u_time * 2.0);
+float p3 = sin((uv.x + uv.y) * 12.0 + u_time * 1.8);
+vec2 ripple = vec2(p1 + p3, p2 + p3) * (0.007 * (1.0 + u_bass * 2.0));
+warpedUV = center + (dir * u_zoom) + ripple;`,
+
+                mobius: `// Hyperbolic Möbius Space Twist
+vec2 z = dir * 2.0;
+float r2 = dot(z, z);
+vec2 invZ = vec2(z.x, -z.y) / (r2 + 0.12);
+float rotA = u_rot + u_time * 0.1;
+mat2 mRot = mat2(cos(rotA), -sin(rotA), sin(rotA), cos(rotA));
+vec2 transformed = mRot * mix(z, invZ, 0.45 * u_swirl);
+warpedUV = center + transformed * (0.25 * u_zoom);`,
+
+                kaleido: `// Sacred 6-Fold Kaleidoscope
+float sides = 6.0;
+float tau = 6.2831853;
+float a = mod(angle, tau / sides) - (tau / sides * 0.5);
+a = abs(a);
+float r = dist * (u_zoom + u_bass * 0.03);
+warpedUV = center + vec2(cos(a + u_rot), sin(a + u_rot)) * r;`,
+
+                droste: `// Infinite Droste Log Tunnel
+float r = log(max(dist, 0.001));
+float a = angle + u_rot;
+vec2 z = vec2(r, a) * 0.6366;
+z.x += u_time * 0.2 * (1.0 + u_bass * 0.6);
+vec2 droste = fract(z) - 0.5;
+warpedUV = center + droste * u_zoom;`,
+
+                shockwave: `// Sub-Bass Reactive Shock
+float pulse = sin(dist * 20.0 - u_time * 5.0) * (u_bass * 0.025);
+float rot = u_rot + (1.0 / (dist + 0.1)) * 0.004;
+mat2 m = mat2(cos(rot), -sin(rot), sin(rot), cos(rot));
+warpedUV = center + m * (dir * (u_zoom + pulse));`
+            };
+
+            glslCodeEditor.value = GLSL_TEMPLATES.vortex;
+
+            function toggleStudio(forceOpen) {
+                const isOpen = !studioDrawer.classList.contains('translate-x-full');
+                const shouldOpen = forceOpen !== undefined ? forceOpen : !isOpen;
+                if (shouldOpen) {
+                    studioDrawer.classList.remove('translate-x-full');
+                    updateJsonEditorFromActivePreset();
+                } else {
+                    studioDrawer.classList.add('translate-x-full');
+                }
+            }
+
+            btnToggleEditor.onclick = () => toggleStudio();
+            btnCloseStudio.onclick = () => toggleStudio(false);
+
+            tabBtnGlsl.onclick = () => {
+                tabBtnGlsl.className = 'flex-1 py-2.5 text-center font-semibold text-amber-300 border-b-2 border-amber-400 bg-white/5 transition flex items-center justify-center gap-2';
+                tabBtnJson.className = 'flex-1 py-2.5 text-center font-semibold text-slate-400 border-b-2 border-transparent hover:text-slate-200 transition flex items-center justify-center gap-2';
+                tabContentGlsl.classList.remove('hidden');
+                tabContentJson.classList.add('hidden');
+            };
+
+            tabBtnJson.onclick = () => {
+                tabBtnJson.className = 'flex-1 py-2.5 text-center font-semibold text-cyan-300 border-b-2 border-cyan-400 bg-white/5 transition flex items-center justify-center gap-2';
+                tabBtnGlsl.className = 'flex-1 py-2.5 text-center font-semibold text-slate-400 border-b-2 border-transparent hover:text-slate-200 transition flex items-center justify-center gap-2';
+                tabContentJson.classList.remove('hidden');
+                tabContentGlsl.classList.add('hidden');
+                updateJsonEditorFromActivePreset();
+            };
+
+            glslTemplates.onchange = (e) => {
+                const t = GLSL_TEMPLATES[e.target.value];
+                if (t) {
+                    glslCodeEditor.value = t;
+                    compileUserGlsl();
+                }
+            };
+
+            function compileUserGlsl() {
+                const code = glslCodeEditor.value;
+                const result = visualizer.compileCustomWarpShader(code);
+                if (result.success) {
+                    compilerStatus.innerHTML = '<i class="fa-solid fa-circle-check text-emerald-400"></i> <span class="text-emerald-400">Compiled OK</span>';
+                    showToast('GLSL Warp Compiled & Running', 'fa-bolt');
+                } else {
+                    compilerStatus.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-rose-400"></i> <span class="text-rose-400" title="${result.error}">Compile Error</span>`;
+                    showToast('Shader compilation failed', 'fa-triangle-exclamation');
+                }
+            }
+            btnCompileGlsl.onclick = compileUserGlsl;
+
+            btnResetGlsl.onclick = () => {
+                glslCodeEditor.value = GLSL_TEMPLATES.vortex;
+                visualizer.resetDefaultWarp();
+                compilerStatus.innerHTML = '<i class="fa-solid fa-circle-check text-emerald-400"></i> <span class="text-emerald-400">Default Reset</span>';
+                showToast('Reset to default preset shader', 'fa-rotate-left');
+            };
+
+            function updateJsonEditorFromActivePreset() {
+                const p = PRESETS[currentPresetIndex];
+                if (!p) return;
+                jsonPresetName.textContent = p.name;
+                const exportObj = {
+                    ...p,
+                    customGlsl: glslCodeEditor.value
+                };
+                jsonCodeEditor.value = JSON.stringify(exportObj, null, 2);
+            }
+
+            btnCopyJson.onclick = () => {
+                const text = jsonCodeEditor.value;
+                const el = document.createElement('textarea');
+                el.value = text;
+                document.body.appendChild(el);
+                el.select();
+                try {
+                    document.execCommand('copy');
+                    showToast('Preset JSON Copied to Clipboard', 'fa-clipboard-check');
+                } catch(e) {}
+                document.body.removeChild(el);
+            };
+
+            btnDownloadJson.onclick = () => {
+                const text = jsonCodeEditor.value;
+                const blob = new Blob([text], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const p = PRESETS[currentPresetIndex];
+                const cleanName = (p ? p.name : 'preset').toLowerCase().replace(/[^a-z0-9]/g, '_');
+                const link = document.createElement('a');
+                link.download = `Milkdrop_${cleanName}.json`;
+                link.href = url;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+                showToast('Preset Downloaded', 'fa-download');
+            };
+
+            btnApplyJson.onclick = () => {
+                try {
+                    const parsed = JSON.parse(jsonCodeEditor.value);
+                    if (!parsed.name) throw new Error('Missing preset name');
+                    PRESETS.push(parsed);
+                    currentPresetIndex = PRESETS.length - 1;
+                    renderPresetPills();
+                    selectPreset(currentPresetIndex);
+                    showToast(`Applied Preset: ${parsed.name}`, 'fa-circle-check');
+                } catch(err) {
+                    showToast('JSON Parse Error: ' + err.message, 'fa-triangle-exclamation');
+                }
+            };
+
+            jsonFileInput.onchange = (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        try {
+                            const parsed = JSON.parse(ev.target.result);
+                            jsonCodeEditor.value = JSON.stringify(parsed, null, 2);
+                            PRESETS.push(parsed);
+                            currentPresetIndex = PRESETS.length - 1;
+                            renderPresetPills();
+                            selectPreset(currentPresetIndex);
+                            showToast(`Imported: ${parsed.name}`, 'fa-file-import');
+                        } catch(err) {
+                            showToast('Import Error: ' + err.message, 'fa-triangle-exclamation');
+                        }
+                    };
+                    reader.readAsText(e.target.files[0]);
+                }
+            };
+
+            btnSaveAsNewPreset.onclick = () => {
+                const base = PRESETS[currentPresetIndex];
+                const cloned = {
+                    ...base,
+                    id: `custom_${Date.now()}`,
+                    name: `${base.name} (Mod)`,
+                    decay: userParams.decay,
+                    customGlsl: glslCodeEditor.value
+                };
+                PRESETS.push(cloned);
+                renderPresetPills();
+                selectPreset(PRESETS.length - 1);
+                showToast(`Saved as "${cloned.name}"`, 'fa-floppy-disk');
+            };
+
+            const vjDrawer = document.getElementById('vj-drawer');
+            const btnToggleVj = document.getElementById('btn-toggle-vj');
+            const btnCloseVj = document.getElementById('btn-close-vj');
+            const btnRequestMidi = document.getElementById('btn-request-midi');
+
+            function toggleVjDrawer(forceOpen) {
+                const isOpen = !vjDrawer.classList.contains('-translate-x-full');
+                const shouldOpen = forceOpen !== undefined ? forceOpen : !isOpen;
+                if (shouldOpen) {
+                    vjDrawer.classList.remove('-translate-x-full');
+                } else {
+                    vjDrawer.classList.add('-translate-x-full');
+                }
+            }
+
+            if (btnToggleVj) btnToggleVj.onclick = () => toggleVjDrawer();
+            if (btnCloseVj) btnCloseVj.onclick = () => toggleVjDrawer(false);
+            if (btnRequestMidi) btnRequestMidi.onclick = () => vjManager.initMidi();
+
+            // Instantiate VJ Controller Rig
+            const vjManager = new VJControllerManager((action, data) => {
+                if (action === 'toast') showToast(data.msg, data.icon);
+                else if (action === 'beatFlash') visualizer.triggerBeatFlash();
+                else if (action === 'randomPreset') randomPreset();
+                else if (action === 'prevPreset') prevPreset();
+                else if (action === 'nextPreset') nextPreset();
+                else if (action === 'tapTempo') btnTapTempo.click();
+                else if (action === 'cycleGroove') btnGroove.click();
+                else if (action === 'midiNoteTrigger') {
+                    shockwave.x = data.x;
+                    shockwave.y = data.y;
+                    shockwave.radius = 0.01;
+                    visualizer.triggerBeatFlash();
+                } else if (action === 'setParam') {
+                    userParams[data.key] = data.val;
+                    if (data.key === 'warp') {
+                        document.getElementById('slider-warp').value = data.val;
+                        document.getElementById('val-warp').textContent = data.val.toFixed(1);
+                    } else if (data.key === 'sensitivity') {
+                        document.getElementById('slider-sens').value = data.val;
+                        document.getElementById('val-sens').textContent = data.val.toFixed(1);
+                    } else if (data.key === 'decay') {
+                        document.getElementById('slider-decay').value = data.val;
+                        document.getElementById('val-decay').textContent = data.val.toFixed(3);
+                    } else if (data.key === 'bloom') {
+                        document.getElementById('slider-bloom').value = data.val;
+                        document.getElementById('val-bloom').textContent = data.val.toFixed(2);
+                    }
+                }
+            });
+
+            // Keyboard Shortcuts
+            const controlsDrawer = document.getElementById('controls-drawer');
+            const osdHud = document.getElementById('osd-hud');
+
+            window.addEventListener('keydown', (e) => {
+                if (document.activeElement === glslCodeEditor || document.activeElement === jsonCodeEditor) {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                        e.preventDefault();
+                        if (document.activeElement === glslCodeEditor) compileUserGlsl();
+                        else btnApplyJson.click();
+                    } else if (e.key === 'Escape') {
+                        toggleStudio(false);
+                    }
+                    return;
+                }
+
+                if (e.key === ' ' || e.code === 'Space') {
+                    e.preventDefault();
+                    randomPreset();
+                } else if (e.key === 'ArrowRight') {
+                    nextPreset();
+                } else if (e.key === 'ArrowLeft') {
+                    prevPreset();
+                } else if (e.key.toLowerCase() === 'h') {
+                    controlsDrawer.classList.toggle('hidden');
+                    osdHud.classList.toggle('hidden');
+                } else if (e.key.toLowerCase() === 'e') {
+                    toggleStudio();
+                } else if (e.key.toLowerCase() === 'm') {
+                    toggleVjDrawer();
+                } else if (e.key.toLowerCase() === 'f') {
+                    btnFullscreen.click();
+                } else if (e.key.toLowerCase() === 's') {
+                    takeSnapshot();
+                } else if (e.key.toLowerCase() === 'r') {
+                    toggleRecording();
+                } else if (e.key.toLowerCase() === 't') {
+                    btnTapTempo.click();
+                } else if (e.key.toLowerCase() === 'g') {
+                    btnGroove.click();
+                } else if (e.key.toLowerCase() === 'v') {
+                    userParams.fxEnabled = !userParams.fxEnabled;
+                    checkPostFx.checked = userParams.fxEnabled;
+                    showToast(userParams.fxEnabled ? 'CRT Post-FX ON' : 'CRT Post-FX OFF', 'fa-tv');
+                } else if (!isNaN(e.key) && parseInt(e.key) >= 1 && parseInt(e.key) <= 9) {
+                    selectPreset(parseInt(e.key) - 1);
+                }
+            });
+
+            // Autostart synth on initial user interaction if audio context suspended
+            const startOnce = () => {
+                audio.init();
+                audio.startSynth();
+                iconSynthPlay.className = 'fa-solid fa-pause';
+                labelSynthStatus.textContent = 'Synth Pause';
+                window.removeEventListener('click', startOnce);
+            };
+            window.addEventListener('click', startOnce, { once: true });
+
+            let lastTime = performance.now();
+            let frameCount = 0;
+            let fpsTimer = performance.now();
+
+            function mainLoop() {
+                requestAnimationFrame(mainLoop);
+
+                const now = performance.now();
+                frameCount++;
+                if (now - fpsTimer >= 1000) {
+                    osdFps.textContent = `FPS: ${frameCount}`;
+                    frameCount = 0;
+                    fpsTimer = now;
+                }
+
+                // Audio analysis
+                const analysis = audio.updateAnalysis();
+                if (analysis.isBeat) {
+                    osdBeat.classList.remove('hidden');
+                    visualizer.triggerBeatFlash();
+                } else {
+                    osdBeat.classList.add('hidden');
+                }
+
+                // Expand shockwave
+                if (shockwave.radius >= 0.0) {
+                    shockwave.radius += 0.02;
+                    if (shockwave.radius > 1.4) shockwave.radius = -1.0;
+                }
+
+                const gamepadMods = vjManager.pollGamepad(mouseOffset, shockwave);
+
+                const preset = PRESETS[currentPresetIndex] || PRESETS[0];
+
+                // Render 2D Shapes & Tentacles
+                shapeRenderer.render(preset, analysis, userParams);
+
+                // Render WebGL Warp Feedback & Post-FX with Gamepad analog adjustments
+                const renderParams = {
+                    decay: userParams.decay,
+                    zoom: preset.zoom + (gamepadMods ? gamepadMods.zoomMod : 0),
+                    rot: preset.rot + (gamepadMods ? gamepadMods.rotMod : 0),
+                    swirl: preset.swirl,
+                    warp: userParams.warp,
+                    sensitivity: userParams.sensitivity,
+                    colorSpeed: userParams.colorSpeed,
+                    warpType: preset.warpType,
+                    palette: preset.palette,
+                    fxEnabled: userParams.fxEnabled,
+                    crtCurve: userParams.crtCurve,
+                    scanlines: userParams.scanlines,
+                    chroma: userParams.chroma,
+                    bloom: userParams.bloom
+                };
+
+                visualizer.render(canvas2d, renderParams, analysis, mouseOffset, shockwave);
+            }
+
+            mainLoop();
+        };
+    </script>
+</body>
+</html>
